@@ -72,3 +72,114 @@ class BreakdownQuery(AnalyticsFilters):
 class TopZonesQuery(AnalyticsFilters):
     metric: TimeSeriesMetric = "total_trips"
     limit: int = Field(default=10, ge=1, le=50)
+
+
+class OverviewQuery(AnalyticsFilters):
+    compare: Literal["none", "previous"] = "none"
+
+
+class ZoneQuery(AnalyticsFilters):
+    metric: TimeSeriesMetric = "total_trips"
+    side: Literal["pickup", "dropoff"] = "pickup"
+    limit: int = Field(default=10, ge=1, le=300)
+
+
+class FlowQuery(AnalyticsFilters):
+    metric: TimeSeriesMetric = "total_trips"
+    limit: int = Field(default=15, ge=1, le=50)
+
+
+class DistributionQuery(AnalyticsFilters):
+    metric: Literal["trip_distance", "total_amount"] = "trip_distance"
+
+
+# Kept in sync with pipeline.rules.FLAGS and query_builder.SORTABLE / EXPLORER_COLUMNS (unit-tested).
+FlagName = Literal[
+    "invalid_distance",
+    "invalid_duration",
+    "invalid_amount",
+    "implausible_speed",
+    "passenger_count_missing_or_zero",
+    "pickup_zone_unmapped",
+    "dropoff_zone_unmapped",
+]
+SortColumn = Literal[
+    "pickup_datetime",
+    "trip_distance",
+    "trip_duration_minutes",
+    "total_amount",
+    "fare_amount",
+    "tip_amount",
+    "passenger_count",
+    "average_speed_mph",
+]
+ExplorerColumn = Literal[
+    "pickup_datetime",
+    "dropoff_datetime",
+    "pickup_location_id",
+    "dropoff_location_id",
+    "trip_distance",
+    "trip_duration_minutes",
+    "passenger_count",
+    "payment_type",
+    "vendor_id",
+    "rate_code_id",
+    "fare_amount",
+    "tip_amount",
+    "tolls_amount",
+    "total_amount",
+    "congestion_surcharge",
+    "airport_fee",
+    "cbd_congestion_fee",
+    "average_speed_mph",
+    "quality_flags",
+    "source_file",
+    "run_id",
+]
+MAX_PREVIEW_OFFSET = 10_000
+PAGE_SIZES = (25, 50, 100)
+
+
+class RowScope(BaseModel):
+    """Row-level options shared by the explorer preview and extracts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    sort: SortColumn = "pickup_datetime"
+    order: Literal["asc", "desc"] = "desc"
+    quality: Literal["all", "clean", "flagged"] = "all"
+    flag: FlagName | None = None
+
+
+class ExplorerQuery(AnalyticsFilters):
+    sort: SortColumn = "pickup_datetime"
+    order: Literal["asc", "desc"] = "desc"
+    quality: Literal["all", "clean", "flagged"] = "all"
+    flag: FlagName | None = None
+    page: int = Field(default=1, ge=1)
+    page_size: int = 50
+
+    @model_validator(mode="after")
+    def _bounded(self) -> ExplorerQuery:
+        if self.page_size not in PAGE_SIZES:
+            raise ValueError(f"page_size must be one of {PAGE_SIZES}")
+        if self.page * self.page_size > MAX_PREVIEW_OFFSET:
+            raise ValueError(
+                f"preview is limited to the first {MAX_PREVIEW_OFFSET:,} rows; "
+                "narrow the filters or download an extract"
+            )
+        return self
+
+    def scope(self) -> RowScope:
+        return RowScope(sort=self.sort, order=self.order, quality=self.quality, flag=self.flag)
+
+    def filters(self) -> AnalyticsFilters:
+        return AnalyticsFilters.model_validate(self.model_dump(include=set(AnalyticsFilters.model_fields)))
+
+
+class ExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    format: Literal["csv"] = "csv"
+    filters: AnalyticsFilters = Field(default_factory=AnalyticsFilters)
+    scope: RowScope = Field(default_factory=RowScope)
+    columns: list[ExplorerColumn] | None = Field(default=None, min_length=1, max_length=30)
+    max_rows: int | None = Field(default=None, ge=1)

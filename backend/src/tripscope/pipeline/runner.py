@@ -196,6 +196,40 @@ def _acquire_reference_zones(deps: PipelineDeps, work: Path) -> tuple[list[Zone]
     return zones, acquired.sha256
 
 
+def ensure_zone_geometry(deps: PipelineDeps, work: Path, *, force: bool = False) -> bool:
+    """Build the map's zone GeoJSON into the lake if it is missing (or `force`). Returns True if built."""
+    from tripscope.pipeline.zone_geometry import GEOMETRY_KEY, build_zone_geojson, geojson_bytes
+
+    ref = deps.manifest.reference.get("taxi_zone_shapes")
+    if ref is None or (not force and deps.store.head(GEOMETRY_KEY) is not None):
+        return False
+    file_name = Path(ref.uri).name
+    local = deps.manifest.resolve_local_path(ref.uri) if ref.uri.startswith("file:") else None
+    acquired = acquire(
+        ref.uri,
+        dest_dir=work / "reference",
+        file_name=file_name,
+        max_bytes=50 * 1024 * 1024,
+        expected_sha256=ref.expected_sha256,
+        local_path=local,
+    )
+    deps.store.put_immutable(
+        lake.reference_key("taxi_zone_shapes", acquired.sha256, file_name),
+        acquired.local_path,
+        sha256=acquired.sha256,
+        metadata={"source-uri": ref.uri, "retrieved-at": acquired.retrieved_at.isoformat()},
+    )
+    collection = build_zone_geojson(acquired.local_path)
+    deps.store.put_bytes(
+        GEOMETRY_KEY,
+        geojson_bytes(collection),
+        content_type="application/geo+json",
+        metadata={"source-sha256": acquired.sha256, "zones": str(len(collection["features"]))},
+    )
+    log.info("zone geometry built", extra={"zones": len(collection["features"])})
+    return True
+
+
 def run_source(
     deps: PipelineDeps,
     source_key: str,
@@ -320,13 +354,7 @@ class _SourceRun:
                     list(mapping.unavailable),
                 )
             with self.recorder.stage("zones"):
-                zones, zones_sha = _acquire_reference_zones(self.deps, self.work)
-                load_zones(
-                    self.deps.clickhouse,
-                    database=self.deps.clickhouse_database,
-                    zones=zones,
-                    source_sha256=zones_sha,
-                )
+                zones = self._load_reference_data()
             with self.recorder.stage("spark_transform"):
                 ctx = TransformContext(
                     run_id=str(self.run_id),
@@ -395,6 +423,18 @@ class _SourceRun:
             duration_seconds=duration,
             stage_seconds=dict(self.recorder.timings),
         )
+
+    def _load_reference_data(self) -> list[Zone]:
+        """Zone lookup into ClickHouse; map boundaries into the lake if missing (never blocks the run)."""
+        zones, zones_sha = _acquire_reference_zones(self.deps, self.work)
+        load_zones(
+            self.deps.clickhouse, database=self.deps.clickhouse_database, zones=zones, source_sha256=zones_sha
+        )
+        try:
+            ensure_zone_geometry(self.deps, self.work)
+        except Exception as exc:
+            log.warning("zone geometry not built", extra={"error": f"{type(exc).__name__}: {exc}"})
+        return zones
 
     def _acquire(self) -> AcquiredFile:
         source = self.source
