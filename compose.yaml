@@ -98,7 +98,89 @@ services:
       S3_TEST_BUCKET: ${S3_TEST_BUCKET:-tripscope-test}
     restart: "no"
 
+  # ---- Application (profile: app) -------------------------------------------------------------
+  # Each container gets only the credentials it needs: the API has the read-only ClickHouse user
+  # and no lake or writer secrets; the pipeline has the writer and the lake read/write identity.
+  db-migrate:
+    profiles: ["app", "pipeline"]
+    build: { context: ., dockerfile: infrastructure/docker/backend.Dockerfile, target: api }
+    image: tripscope-api:dev
+    command: ["alembic", "upgrade", "head"]
+    environment: &postgres-env
+      APP_ENV: ${APP_ENV:-development}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-tripscope}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      CLICKHOUSE_READER_PASSWORD: ${CLICKHOUSE_READER_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    profiles: ["app"]
+    image: tripscope-api:dev  # built by db-migrate (same image)
+    environment:
+      <<: *postgres-env
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-tripscope}
+      CLICKHOUSE_READER_USER: ${CLICKHOUSE_READER_USER:-tripscope_reader}
+      ANALYTICS_QUERY_TIMEOUT_SECONDS: ${ANALYTICS_QUERY_TIMEOUT_SECONDS:-30}
+      ANALYTICS_MAX_RANGE_DAYS: ${ANALYTICS_MAX_RANGE_DAYS:-1100}
+      # Readiness checks the lake bucket; this identity is the app's, reachable only inside the network.
+      S3_ENDPOINT_URL: http://seaweedfs:8333
+      S3_BUCKET: ${S3_BUCKET:-tripscope-lake}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+      seaweedfs: { condition: service_healthy }
+
+  web:
+    profiles: ["app"]
+    image: tripscope-web:dev
+    build: { context: ., dockerfile: infrastructure/docker/web.Dockerfile }
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8080}:8080"
+    depends_on:
+      api: { condition: service_healthy }
+
+  # One-off Spark runs: docker compose --profile pipeline run --rm pipeline run --source yellow-2025-01
+  pipeline:
+    profiles: ["pipeline"]
+    image: tripscope-pipeline:dev
+    build: { context: ., dockerfile: infrastructure/docker/backend.Dockerfile, target: pipeline }
+    environment:
+      <<: *postgres-env
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-tripscope}
+      CLICKHOUSE_WRITER_USER: ${CLICKHOUSE_WRITER_USER:-tripscope_writer}
+      CLICKHOUSE_WRITER_PASSWORD: ${CLICKHOUSE_WRITER_PASSWORD}
+      S3_ENDPOINT_URL: http://seaweedfs:8333
+      S3_BUCKET: ${S3_BUCKET:-tripscope-lake}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      PIPELINE_WORK_DIR: /data/work
+      PIPELINE_MAX_SOURCE_MB: ${PIPELINE_MAX_SOURCE_MB:-500}
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-4g}
+    volumes:
+      - pipeline-work:/data/work
+      - ./manifests:/app/manifests:ro
+    working_dir: /app
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+      seaweedfs: { condition: service_healthy }
+
 volumes:
   postgres-data:
   clickhouse-data:
   seaweedfs-data:
+  pipeline-work:
