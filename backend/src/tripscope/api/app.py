@@ -13,11 +13,12 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tripscope.analytics.service import AnalyticsService
-from tripscope.api.routers import analytics, auth, datasets, health, jobs, sources
+from tripscope.api.routers import analytics, auth, datasets, explorer, health, jobs, sources
 from tripscope.api.security import LoginThrottle
 from tripscope.core.errors import TripScopeError
 from tripscope.core.logging import configure_logging, request_id_var
@@ -81,6 +82,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.object_store = lambda: ObjectStore.from_settings(settings)
     app.state.manifest = ManifestCache(settings.resolved_manifest_path)
+    app.state.geometry_cache = {}
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     if settings.cors_origins:
         app.add_middleware(
@@ -89,6 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_credentials=True,
             allow_methods=["GET", "POST"],
             allow_headers=["Content-Type", "X-Request-ID"],
+            expose_headers=["X-Total-Rows", "X-Exported-Rows", "X-Truncated"],
         )
 
     @app.middleware("http")
@@ -151,6 +155,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.include_router(health.router)
-    for router in (auth.router, datasets.router, analytics.router, jobs.router, sources.router):
+    for router in (
+        auth.router,
+        datasets.router,
+        analytics.router,
+        explorer.router,
+        jobs.router,
+        sources.router,
+    ):
         app.include_router(router, prefix=API_PREFIX)
     return app

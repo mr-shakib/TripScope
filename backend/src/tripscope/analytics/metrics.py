@@ -57,6 +57,18 @@ METRICS: dict[str, MetricDefinition] = {
             rows_included="All curated trips (quarantined rows are not counted).",
         ),
         MetricDefinition(
+            id="avg_daily_trips",
+            label="Trips per day",
+            unit="trips",
+            expression="count() / nullIf(uniqExact(pickup_date), 0)",
+            excluded_rows_expression=None,
+            agg_expression="sum(trips) / nullIf(uniqExact(pickup_date), 0)",
+            agg_excluded_rows_expression=None,
+            description="Average number of accepted trips per calendar day that has data in the selection.",
+            rows_included="All curated trips; days without any matching trip are not counted.",
+            caveats=("With hour or weekday filters this is trips per matching day, not per calendar day.",),
+        ),
+        MetricDefinition(
             id="total_recorded_amount",
             label="Total recorded amount",
             unit="usd",

@@ -82,6 +82,7 @@ class Settings(BaseSettings):
 
     analytics_query_timeout_seconds: int = Field(default=30, ge=1, le=300)
     analytics_max_range_days: int = Field(default=1100, ge=1, le=5000)
+    max_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
 
     @field_validator("clickhouse_database")
     @classmethod

@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Spark is only needed by the pipeline runner, not by the API image.
-pipeline = ["pyspark==4.2.0"]
+pipeline = ["pyspark==4.2.0", "pyshp>=3.1,<4", "pyproj>=3.8,<4", "shapely>=2.2,<3"]
 
 [project.scripts]
 tripscope-pipeline = "tripscope.pipeline.cli:main"
@@ -73,7 +73,7 @@ packages = ["tripscope"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyspark.*", "clickhouse_connect.*", "pyarrow.*"]
+module = ["pyspark.*", "clickhouse_connect.*", "pyarrow.*", "shapefile.*", "shapely.*", "pyproj.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

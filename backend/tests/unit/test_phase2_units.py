@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from tests.fixtures.tlc_fixture import fixture_rows, shift_year, write_open_data_csv
 from tripscope.analytics.filters import AnalyticsFilters
+from tripscope.analytics.metrics import METRICS
 from tripscope.analytics.query_builder import (
     HOURLY_AGG,
     RAW,
@@ -101,15 +102,20 @@ def test_schema_report_detects_added_case_renamed_and_retyped_columns() -> None:
     }
 
 
-def test_queries_use_the_aggregate_only_when_every_filter_is_covered() -> None:
-    assert choose_source(AnalyticsFilters()) is HOURLY_AGG
-    assert (
-        choose_source(AnalyticsFilters(pickup_zone=[1], payment_type=[1], hour=[8], vendor_id=[2]))
-        is HOURLY_AGG
-    )
-    assert choose_source(AnalyticsFilters(dropoff_zone=[1])) is RAW
-    assert choose_source(AnalyticsFilters(min_distance=1)) is RAW
-    assert choose_source(AnalyticsFilters(max_distance=5)) is RAW
+def test_overview_uses_the_hourly_aggregate_only_when_every_filter_is_covered() -> None:
+    every_metric = list(METRICS)
+    assert choose_source(AnalyticsFilters(), metrics=every_metric) is HOURLY_AGG
+    covered = AnalyticsFilters(pickup_zone=[1], payment_type=[1], hour=[8], vendor_id=[2], weekday=[6, 7])
+    assert choose_source(covered, metrics=every_metric) is HOURLY_AGG
+    where = where_clause(covered, taxi_type="yellow", published_periods=[])
+    assert "pickup_day_of_week IN {weekday:Array(UInt8)}" in where.sql and where.parameters["weekday"] == [
+        6,
+        7,
+    ]
+    # Drop-off filters need either the drop-off aggregate (no duration) or the fact table.
+    assert choose_source(AnalyticsFilters(dropoff_zone=[1]), metrics=every_metric) is RAW
+    assert choose_source(AnalyticsFilters(min_distance=1), metrics=every_metric) is RAW
+    assert choose_source(AnalyticsFilters(max_distance=5), metrics=every_metric) is RAW
     assert choose_source(AnalyticsFilters(), prefer_raw=True) is RAW
 
 
@@ -131,11 +137,11 @@ def test_group_limit_is_a_bounded_parameter() -> None:
         "tripscope",
         where,
         metric="total_trips",
-        dimension="pickup_zone",
+        dimensions=["pickup_zone"],
         source=RAW,
         order="value",
         limit=10_000,
     )
     assert query.parameters["group_limit"] == 300 and "{group_limit:UInt32}" in query.sql
     with pytest.raises(KeyError):
-        grouped_query("tripscope", where, metric="total_trips", dimension="dropoff_zone; DROP", source=RAW)
+        grouped_query("tripscope", where, metric="total_trips", dimensions=["dropoff_zone; DROP"], source=RAW)

@@ -19,6 +19,7 @@ from alembic.config import Config
 from sqlalchemy import text
 
 from tests.fixtures.tlc_fixture import fixture_rows, shift_year, write_fixture_parquet, write_open_data_csv
+from tests.fixtures.zones_fixture import write_zone_zip
 from tripscope.core.passwords import hash_password
 from tripscope.core.settings import Settings, get_settings
 from tripscope.metadata.db import make_engine, make_session_factory
@@ -90,6 +91,7 @@ def env(settings: Settings, tmp_path_factory: pytest.TempPathFactory, spark: Any
     write_open_data_csv(sources / "open_data_2023-01.csv", csv_rows)
     write_open_data_csv(sources / "open_data_2023-02.csv", shift_year(fixture_rows(), -2), truncated_after=5)
     _zone_csv(sources / "taxi_zone_lookup.csv")
+    write_zone_zip(sources / "taxi_zones.zip")
     manifest_doc = {
         "version": 1,
         "datasets": {
@@ -104,7 +106,10 @@ def env(settings: Settings, tmp_path_factory: pytest.TempPathFactory, spark: Any
                 "source_attribution": "fixture",
             },
         },
-        "reference": {"taxi_zones": {"uri": "file://sources/taxi_zone_lookup.csv"}},
+        "reference": {
+            "taxi_zones": {"uri": "file://sources/taxi_zone_lookup.csv"},
+            "taxi_zone_shapes": {"uri": "file://sources/taxi_zones.zip"},
+        },
         "sources": [
             {
                 "key": "fixture-2025-01",

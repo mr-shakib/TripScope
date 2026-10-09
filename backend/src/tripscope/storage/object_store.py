@@ -95,6 +95,25 @@ class ObjectStore:
             keys.append(key)
         return UploadedPrefix(prefix=prefix, keys=keys, total_bytes=total)
 
+    def get_bytes(self, key: str, *, max_bytes: int = 20 * 1024 * 1024) -> bytes | None:
+        """Read a small object (reference data); None if absent."""
+        try:
+            response = self._client.get_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        if int(response.get("ContentLength", 0)) > max_bytes:
+            raise PipelineError(f"object {key} is larger than {max_bytes} bytes")
+        return bytes(response["Body"].read())
+
+    def put_bytes(
+        self, key: str, data: bytes, *, content_type: str, metadata: dict[str, str] | None = None
+    ) -> None:
+        self._client.put_object(
+            Bucket=self.bucket, Key=key, Body=data, ContentType=content_type, Metadata=metadata or {}
+        )
+
     def list_keys(self, prefix: str) -> list[str]:
         keys: list[str] = []
         paginator = self._client.get_paginator("list_objects_v2")

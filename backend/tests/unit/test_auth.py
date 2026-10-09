@@ -104,7 +104,7 @@ def _settings() -> Settings:
 
 
 class _FakeAnalytics:
-    def overview(self, filters: Any) -> dict[str, Any]:
+    def overview(self, filters: Any, **_: Any) -> dict[str, Any]:
         return {"kpis": {}, "data_state": "ok", "meta": {"filters": filters.applied()}}
 
     def time_series(self, query: Any) -> dict[str, Any]:

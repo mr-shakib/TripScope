@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     worker.add_argument("--poll-seconds", type=float, default=2.0)
     aggregates = sub.add_parser("build-aggregates", help="rebuild pre-aggregates from published data")
     aggregates.add_argument("--period", action="append", help="YYYY-MM (repeatable; default: all published)")
+    sub.add_parser("build-zone-geometry", help="(re)build the map's zone boundaries from the TLC shapefile")
     inspect = sub.add_parser("inspect-file", help="validate a local file without ingesting it")
     inspect.add_argument("path", type=Path)
     inspect.add_argument("--format", choices=["parquet", "csv"], required=True)
@@ -117,6 +118,12 @@ def _dispatch(args: argparse.Namespace) -> int:
     try:
         if args.command == "worker":
             return _worker(deps, spark_holder, once=args.once, poll_seconds=args.poll_seconds)
+        if args.command == "build-zone-geometry":
+            from tripscope.pipeline.runner import ensure_zone_geometry
+
+            ensure_zone_geometry(deps, settings.pipeline_work_dir, force=True)
+            print(json.dumps({"built": True}))
+            return 0
         keys = [s.key for s in manifest.sources] if args.all else args.source
         failures = 0
         for key in keys:
