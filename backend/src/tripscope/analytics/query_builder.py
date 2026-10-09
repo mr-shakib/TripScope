@@ -96,6 +96,7 @@ def where_clause(filters: AnalyticsFilters, *, taxi_type: str, published_periods
         ("payment_type", "payment_type", "Int32"),
         ("vendor_id", "vendor_id", "Int32"),
         ("hour", "pickup_hour", "UInt8"),
+        ("weekday", "pickup_day_of_week", "UInt8"),
     ):
         values = getattr(filters, field)
         if values:
