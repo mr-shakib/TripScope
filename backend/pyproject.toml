@@ -62,6 +62,7 @@ ignore = ["PLR0913", "PLR2004", "S101", "PLR0911", "PLC0415", "N812"]  # N812: p
 "migrations/**" = ["E501"]
 # Interpolates only validated identifiers/paths; values are bound parameters (see module docstring).
 "src/tripscope/pipeline/clickhouse_load.py" = ["S608"]
+"src/tripscope/analytics/query_builder.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -1,0 +1,135 @@
+"""FastAPI application factory."""
+
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from tripscope.analytics.service import AnalyticsService
+from tripscope.api.routers import analytics, auth, datasets, health, jobs
+from tripscope.api.security import LoginThrottle
+from tripscope.core.errors import TripScopeError
+from tripscope.core.logging import configure_logging, request_id_var
+from tripscope.core.settings import Settings, get_settings
+from tripscope.metadata.db import make_engine, make_session_factory
+from tripscope.storage.clickhouse import reader_client
+from tripscope.storage.object_store import ObjectStore
+
+log = logging.getLogger("tripscope.api")
+API_PREFIX = "/api/v1"
+
+
+def _error(status: int, code: str, message: str, details: Any = None) -> JSONResponse:
+    body: dict[str, Any] = {"error": {"code": code, "message": message, "request_id": request_id_var.get()}}
+    if details:
+        body["error"]["details"] = details
+    return JSONResponse(body, status_code=status)
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
+    configure_logging()
+    production = settings.app_env == "production"
+    app = FastAPI(
+        title="TripScope API",
+        version="0.1.0",
+        docs_url=None if production else "/api/docs",
+        redoc_url=None,
+        openapi_url=None if production else "/api/openapi.json",
+    )
+
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+    app.state.settings = settings
+    app.state.engine = engine
+    app.state.session_factory = session_factory
+    app.state.login_throttle = LoginThrottle()
+    app.state.analytics = AnalyticsService(
+        client_factory=lambda: reader_client(settings),
+        session_factory=session_factory,
+        database=settings.clickhouse_database,
+        max_range_days=settings.analytics_max_range_days,
+    )
+    app.state.object_store = lambda: ObjectStore.from_settings(settings)
+
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", "X-Request-ID"],
+        )
+
+    @app.middleware("http")
+    async def request_context(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        incoming = request.headers.get("x-request-id", "")
+        request_id = incoming if 8 <= len(incoming) <= 64 and incoming.isalnum() else uuid.uuid4().hex
+        token = request_id_var.set(request_id)
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        finally:
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        log.info(
+            "request",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration_ms": elapsed_ms,
+            },
+        )
+        request_id_var.reset(token)
+        response.headers["X-Request-ID"] = request_id
+        response.headers["Server-Timing"] = f"app;dur={elapsed_ms}"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if request.url.path.startswith(API_PREFIX):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.exception_handler(TripScopeError)
+    async def domain_error(request: Request, exc: TripScopeError) -> JSONResponse:
+        return _error(exc.status_code, exc.code, exc.message, exc.details or None)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        details = [
+            {
+                "field": ".".join(str(p) for p in err.get("loc", ())[1:]) or None,
+                "message": err.get("msg"),
+                "type": err.get("type"),
+            }
+            for err in exc.errors()
+        ]
+        return _error(422, "validation_failed", "request validation failed", details)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = {404: "not_found", 405: "method_not_allowed"}.get(exc.status_code, "http_error")
+        return _error(exc.status_code, code, str(exc.detail))
+
+    @app.exception_handler(Exception)
+    async def unhandled(request: Request, exc: Exception) -> JSONResponse:
+        log.exception("unhandled error")
+        return _error(
+            500, "internal_error", "an unexpected error occurred; quote the request ID when reporting it"
+        )
+
+    app.include_router(health.router)
+    for router in (auth.router, datasets.router, analytics.router, jobs.router):
+        app.include_router(router, prefix=API_PREFIX)
+    return app
