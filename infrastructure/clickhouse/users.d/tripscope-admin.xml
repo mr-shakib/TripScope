@@ -1,0 +1,11 @@
+<!-- Extra rights for the bootstrap admin user created by the image entrypoint (CLICKHOUSE_USER=tripscope_admin).
+     Needed so the init script can grant the lake named collection to the pipeline writer. -->
+<clickhouse>
+    <users>
+        <tripscope_admin>
+            <named_collection_control>1</named_collection_control>
+            <show_named_collections>1</show_named_collections>
+            <show_named_collections_secrets>0</show_named_collections_secrets>
+        </tripscope_admin>
+    </users>
+</clickhouse>
