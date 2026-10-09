@@ -190,6 +190,7 @@ FILTER_CASES: list[dict[str, Any]] = [
     {"pickup_zone": [132, 161]},
     {"payment_type": [1], "hour": [8, 9, 23]},
     {"vendor_id": [1]},
+    {"weekday": [1, 2], "pickup_zone": [161]},
 ]
 
 

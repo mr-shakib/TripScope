@@ -12,6 +12,7 @@ ZoneId = Annotated[int, Field(ge=1, le=265)]
 PaymentType = Annotated[int, Field(ge=0, le=6)]
 VendorId = Annotated[int, Field(ge=1, le=99)]
 Hour = Annotated[int, Field(ge=0, le=23)]
+Weekday = Annotated[int, Field(ge=1, le=7)]  # ISO: 1 = Monday … 7 = Sunday
 
 DEFAULT_DATASET = "nyc-tlc-yellow"
 MAX_LIST_ITEMS = 50
@@ -28,6 +29,7 @@ class AnalyticsFilters(BaseModel):
     payment_type: list[PaymentType] = Field(default_factory=list, max_length=7)
     vendor_id: list[VendorId] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
     hour: list[Hour] = Field(default_factory=list, max_length=24)
+    weekday: list[Weekday] = Field(default_factory=list, max_length=7)
     min_distance: float | None = Field(default=None, ge=0, le=1000)
     max_distance: float | None = Field(default=None, ge=0, le=1000)
 
