@@ -61,3 +61,12 @@ TimeSeriesMetric = Literal[
 class TimeSeriesQuery(AnalyticsFilters):
     metric: TimeSeriesMetric = "total_trips"
     granularity: Granularity = "day"
+
+
+class BreakdownQuery(AnalyticsFilters):
+    metric: TimeSeriesMetric = "total_trips"
+
+
+class TopZonesQuery(AnalyticsFilters):
+    metric: TimeSeriesMetric = "total_trips"
+    limit: int = Field(default=10, ge=1, le=50)

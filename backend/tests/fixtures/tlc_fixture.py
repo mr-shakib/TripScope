@@ -245,3 +245,61 @@ def expected_overview(rows: list[FixtureRow]) -> dict[str, Any]:
         "excluded_distance_rows": len(accepted) - len(distance_ok),
         "excluded_duration_rows": len(accepted) - len(duration_ok),
     }
+
+
+OPEN_DATA_HEADER = [
+    "VendorID",
+    "tpep_pickup_datetime",
+    "tpep_dropoff_datetime",
+    "passenger_count",
+    "trip_distance",
+    "RatecodeID",
+    "store_and_fwd_flag",
+    "PULocationID",
+    "DOLocationID",
+    "payment_type",
+    "fare_amount",
+    "extra",
+    "mta_tax",
+    "tip_amount",
+    "tolls_amount",
+    "improvement_surcharge",
+    "total_amount",
+    "congestion_surcharge",
+    "airport_fee",
+]
+
+
+def shift_year(rows: list[FixtureRow], years: int) -> list[FixtureRow]:
+    """The same fixture rows moved to another year (expectations are unchanged)."""
+
+    def move(value: datetime | None) -> datetime | None:
+        return value.replace(year=value.year + years) if value else None
+
+    return [
+        FixtureRow(**{**r.__dict__, "pickup": move(r.pickup), "dropoff": move(r.dropoff)})  # type: ignore[arg-type]
+        for r in rows
+    ]
+
+
+def write_open_data_csv(path: Path, rows: list[FixtureRow], *, truncated_after: int | None = None) -> None:
+    """NYC Open Data export format: every value quoted, US 12-hour timestamps, lower-case airport_fee and
+    no CBD fee. With `truncated_after`, the file ends with the error payload of a real failed export."""
+
+    def ts(value: datetime | None) -> str:
+        return value.strftime("%m/%d/%Y %I:%M:%S %p") if value else ""
+
+    def cell(value: object) -> str:
+        return '"' + ("" if value is None else str(value)) + '"'
+
+    lines = [",".join(cell(h) for h in OPEN_DATA_HEADER)]
+    for index, row in enumerate(rows):
+        if truncated_after is not None and index == truncated_after:
+            lines += ["{", '  "error" : true,', '  "message" : "Internal error",', '  "status" : 500', "}"]
+            break
+        source = row.as_source()
+        values = [source[h if h != "airport_fee" else "Airport_fee"] for h in OPEN_DATA_HEADER]
+        values[1], values[2] = ts(row.pickup), ts(row.dropoff)
+        lines.append(",".join(cell(v) for v in values))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
