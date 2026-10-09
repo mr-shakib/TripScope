@@ -33,14 +33,34 @@ class ReferenceFile(_Strict):
     retrieved_from: str | None = None
 
 
+# CSV dialects we know how to parse. Timestamps use Spark datetime patterns.
+CSV_PROFILES: dict[str, dict[str, str]] = {
+    # NYC Open Data (Socrata) export: every value quoted, US 12-hour timestamps.
+    "nyc_open_data": {"timestamp_format": "MM/dd/yyyy hh:mm:ss a"},
+}
+
+
 class SourceSpec(_Strict):
     key: str
     dataset: str
     period: str
-    format: Literal["parquet"]
+    format: Literal["parquet", "csv"]
+    csv_profile: Literal["nyc_open_data"] | None = None
     uri: str
     expected_sha256: str | None = None
     retrieved_from: str | None = None
+
+    @model_validator(mode="after")
+    def _csv_needs_profile(self) -> SourceSpec:
+        if self.format == "csv" and self.csv_profile is None:
+            raise ValueError("csv sources must name a csv_profile (e.g. nyc_open_data)")
+        if self.format != "csv" and self.csv_profile is not None:
+            raise ValueError("csv_profile only applies to csv sources")
+        return self
+
+    @property
+    def timestamp_format(self) -> str | None:
+        return CSV_PROFILES[self.csv_profile]["timestamp_format"] if self.csv_profile else None
 
     @field_validator("key")
     @classmethod

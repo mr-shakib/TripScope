@@ -70,6 +70,8 @@ class TransformContext:
     mapping: SchemaMapping
     rules: QualityRules
     mapped_zone_ids: list[int]
+    source_format: str = "parquet"
+    timestamp_format: str | None = None  # Spark pattern for text timestamps (CSV sources)
 
 
 @dataclass
@@ -137,16 +139,23 @@ def build_spark_session(
     )
 
 
-def _source_column(df: DataFrame, name: str) -> Column:
+def _source_column(df: DataFrame, name: str, kind: str, timestamp_format: str | None) -> Column:
     column = F.col(f"`{name}`")
     source_type = df.schema[name].dataType
     if isinstance(source_type, T.TimestampType):
         # A UTC-adjusted source timestamp: convert explicitly to NYC wall-clock time (never implicit).
         return F.from_utc_timestamp(column, "America/New_York").cast(T.TimestampNTZType())
+    if isinstance(source_type, T.StringType):
+        column = F.when(F.trim(column) != "", column)  # blank text is missing, not a cast failure
+        if kind == "timestamp":
+            if timestamp_format is None:
+                raise PipelineError(f"text timestamps in {name!r} need a timestamp format (csv_profile)")
+            # Session time zone is UTC, so the parsed instant keeps the recorded wall-clock time.
+            return F.try_to_timestamp(column, F.lit(timestamp_format)).cast(T.TimestampNTZType())
     return column
 
 
-def normalize(df: DataFrame, mapping: SchemaMapping) -> DataFrame:
+def normalize(df: DataFrame, mapping: SchemaMapping, timestamp_format: str | None = None) -> DataFrame:
     """Select canonical columns with explicit types; absent fields become typed NULLs.
 
     `try_cast` keeps a malformed value from aborting the run; every such value is counted in
@@ -160,7 +169,7 @@ def normalize(df: DataFrame, mapping: SchemaMapping) -> DataFrame:
         if source is None:
             columns.append(F.lit(None).cast(target).alias(canonical.name))
             continue
-        raw = _source_column(df, source)
+        raw = _source_column(df, source, canonical.kind, timestamp_format)
         typed = raw.try_cast(target)
         columns.append(typed.alias(canonical.name))
         failures.append(F.when(raw.isNotNull() & typed.isNull(), F.lit(canonical.name)))
@@ -309,14 +318,32 @@ def compute_metrics(annotated: DataFrame, ctx: TransformContext) -> dict[str, An
     return row
 
 
+def read_source(spark: SparkSession, source_path: Path, ctx: TransformContext) -> DataFrame:
+    if ctx.source_format == "parquet":
+        return spark.read.parquet(str(source_path))
+    if ctx.source_format == "csv":
+        # Every column as text (validated structurally beforehand); typing happens in normalize().
+        schema = T.StructType([T.StructField(c, T.StringType()) for c in ctx.mapping.source_columns])
+        return (
+            spark.read.option("header", True)
+            .option("mode", "FAILFAST")
+            .option("enforceSchema", False)
+            .schema(schema)
+            .csv(str(source_path))
+        )
+    raise PipelineError(f"unsupported source format {ctx.source_format!r}")
+
+
 def transform_file(
     spark: SparkSession, source_path: Path, ctx: TransformContext, output_dir: Path
 ) -> TransformResult:
     curated_dir = output_dir / "curated"
     quarantine_dir = output_dir / "quarantine"
 
-    raw = spark.read.parquet(str(source_path))
-    annotated = annotate(normalize(raw, ctx.mapping), ctx).persist(StorageLevel.MEMORY_AND_DISK)
+    raw = read_source(spark, source_path, ctx)
+    annotated = annotate(normalize(raw, ctx.mapping, ctx.timestamp_format), ctx).persist(
+        StorageLevel.MEMORY_AND_DISK
+    )
     try:
         metrics = compute_metrics(annotated, ctx)
         accepted_rows = int(metrics["accepted_rows"])

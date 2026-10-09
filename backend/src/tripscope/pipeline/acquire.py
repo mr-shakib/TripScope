@@ -6,6 +6,7 @@ reader. Nothing in a file is executed or interpreted as an instruction.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import logging
 import os
@@ -36,7 +37,7 @@ class AcquiredFile:
 
 
 @dataclass(frozen=True)
-class ParquetInspection:
+class SourceInspection:
     num_rows: int
     num_row_groups: int
     columns: dict[str, str]  # column -> arrow type string
@@ -122,7 +123,7 @@ def acquire(
     return AcquiredFile(target, uri, actual, size, retrieved_at, downloaded=True)
 
 
-def inspect_parquet(path: Path) -> ParquetInspection:
+def inspect_parquet(path: Path) -> SourceInspection:
     """Validate Parquet framing and read the schema from the footer without loading data."""
     size = path.stat().st_size
     if size < 12:
@@ -142,9 +143,49 @@ def inspect_parquet(path: Path) -> ParquetInspection:
         raise SourceValidationError("Parquet file contains no rows")
     schema = parquet.schema_arrow
     columns = {name: str(schema.field(name).type) for name in schema.names}
-    return ParquetInspection(
+    return SourceInspection(
         num_rows=metadata.num_rows,
         num_row_groups=metadata.num_row_groups,
         columns=columns,
         created_by=metadata.created_by,
+    )
+
+
+def inspect_csv(path: Path) -> SourceInspection:
+    """Validate a CSV export line by line before Spark sees it (ADR-17).
+
+    Every row must have exactly the header's field count. Exports that end with a server error body (JSON or
+    HTML instead of data) are reported as truncated, because publishing them would misstate coverage.
+    """
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, None)
+            if not header or any(not name.strip() for name in header):
+                raise SourceValidationError("CSV header is missing or has empty column names")
+            if len({h.lower() for h in header}) != len(header):
+                raise SourceValidationError("CSV header has duplicate column names")
+            rows = 0
+            for row in reader:
+                if len(row) != len(header):
+                    line = reader.line_num
+                    first = (row[0] if row else "").lstrip()
+                    if first.startswith(("{", "<")):
+                        raise SourceValidationError(
+                            f"line {line}: the export ends with a server response instead of data "
+                            f"({first[:40]!r}…) after {rows:,} rows; "
+                            "the download is truncated, re-export the file"
+                        )
+                    raise SourceValidationError(
+                        f"line {line} has {len(row)} fields; the header has {len(header)}"
+                    )
+                rows += 1
+    except UnicodeDecodeError as exc:
+        raise SourceValidationError(f"CSV is not valid UTF-8 near byte {exc.start}") from exc
+    except csv.Error as exc:
+        raise SourceValidationError(f"CSV is malformed: {exc}") from exc
+    if rows == 0:
+        raise SourceValidationError("CSV contains a header but no rows")
+    return SourceInspection(
+        num_rows=rows, num_row_groups=0, columns=dict.fromkeys(header, "string"), created_by="csv"
     )

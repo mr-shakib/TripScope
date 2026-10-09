@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     s3_secret_key: SecretStr = SecretStr("")
     s3_region: str = "us-east-1"
 
+    manifest_path: Path | None = None  # default: <repo>/manifests/sources.yaml
     pipeline_work_dir: Path = Path("./data/work")
     pipeline_max_source_mb: int = Field(default=500, ge=1, le=10_000)
     spark_driver_memory: str = "4g"
@@ -118,6 +119,13 @@ class Settings(BaseSettings):
             port=self.postgres_port,
             database=self.postgres_db,
         ).render_as_string(hide_password=False)
+
+    @property
+    def resolved_manifest_path(self) -> Path:
+        if self.manifest_path is not None:
+            return self.manifest_path
+        root = find_repo_root()
+        return (root / "manifests" / "sources.yaml") if root else Path("manifests/sources.yaml")
 
     @property
     def secure_cookies(self) -> bool:

@@ -55,7 +55,7 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "PL", "N"]
-ignore = ["PLR0913", "PLR2004", "S101", "PLR0911", "PLC0415", "N812"]  # N812: pyspark F/T convention
+ignore = ["PLR0913", "PLR0917", "PLR2004", "S101", "PLR0911", "PLC0415", "N812"]  # N812: pyspark F/T convention
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "PLR0915", "S608", "PLR0917"]
@@ -63,6 +63,7 @@ ignore = ["PLR0913", "PLR2004", "S101", "PLR0911", "PLC0415", "N812"]  # N812: p
 # Interpolates only validated identifiers/paths; values are bound parameters (see module docstring).
 "src/tripscope/pipeline/clickhouse_load.py" = ["S608"]
 "src/tripscope/analytics/query_builder.py" = ["S608"]
+"src/tripscope/pipeline/aggregates.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.12"

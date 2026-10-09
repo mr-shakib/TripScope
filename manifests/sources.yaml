@@ -1,7 +1,7 @@
 # TripScope source manifest.
 # Each source is one immutable monthly TLC file. URLs are copied from the official TLC portal
 # (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) and are configuration, not code.
-# expected_sha256 pins the exact bytes we validated; a changed upstream file fails loudly instead of
+# expected_sha256 pins the exact bytes we validated on first retrieval (trust on first use); a changed upstream file fails loudly instead of
 # silently changing published numbers. Remove the pin deliberately to accept a TLC revision.
 version: 1
 
@@ -30,4 +30,44 @@ sources:
     format: parquet
     uri: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-01.parquet
     expected_sha256: 9af277e4c0d3f9deb30644da822981e1e7df6af58313170fd3aa8a474485488a
+    retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+
+  - key: yellow-2025-02
+    dataset: nyc-tlc-yellow
+    period: "2025-02"
+    format: parquet
+    uri: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-02.parquet
+    expected_sha256: 037cba555a73663f3a51a2c27816e40e3feb364769942bdf122b9da31e377bd3
+    retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+
+  - key: yellow-2025-03
+    dataset: nyc-tlc-yellow
+    period: "2025-03"
+    format: parquet
+    uri: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-03.parquet
+    expected_sha256: 20c4b77cce457b7cfdae77c5069ca7dc91c167f876a41467f4502ab69487a186
+    retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+
+  - key: yellow-2025-04
+    dataset: nyc-tlc-yellow
+    period: "2025-04"
+    format: parquet
+    uri: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-04.parquet
+    expected_sha256: 6f98938de9380a3f85600533816f0dc0e6d9b5b210e485d623952bac599bbe28
+    retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+
+  - key: yellow-2025-05
+    dataset: nyc-tlc-yellow
+    period: "2025-05"
+    format: parquet
+    uri: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-05.parquet
+    expected_sha256: 7ef46bcd0fceee7f8c0bb38a532be05bceefabb512d4bb0b32a7727dd862b15c
+    retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+
+  - key: yellow-2025-06
+    dataset: nyc-tlc-yellow
+    period: "2025-06"
+    format: parquet
+    uri: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-06.parquet
+    expected_sha256: 1bea7f5b09c744414451fa7fef09fbc5a393ffb1621c859be6ba0df23a14e1b6
     retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page

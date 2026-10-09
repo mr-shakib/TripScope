@@ -20,6 +20,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -112,11 +113,29 @@ class IngestionJob(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_summary: Mapped[str | None] = mapped_column(Text)
+    # Queue/worker coordination (ADR-15).
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_of_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ingestion_jobs.id", name="fk_ingestion_jobs_retry_of_job_id")
+    )
 
     data_source: Mapped[DataSource] = relationship()
-    runs: Mapped[list[ProcessingRun]] = relationship(back_populates="job")
+    runs: Mapped[list[ProcessingRun]] = relationship(
+        back_populates="job", order_by="ProcessingRun.started_at"
+    )
 
-    __table_args__ = (Index("ix_ingestion_jobs_created_at", "created_at"),)
+    __table_args__ = (
+        Index("ix_ingestion_jobs_created_at", "created_at"),
+        # At most one queued or running job per source, enforced by the database.
+        Index(
+            "uq_ingestion_jobs_active_source",
+            "data_source_id",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
+    )
 
 
 class ProcessingRun(Base):

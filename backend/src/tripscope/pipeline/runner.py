@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -25,15 +26,15 @@ from tripscope.core.errors import PipelineError
 from tripscope.core.identifiers import redact
 from tripscope.metadata.models import (
     DataQualityMetrics,
-    Dataset,
     DatasetPeriod,
     DataSource,
     IngestionJob,
     JobStatus,
     ProcessingRun,
 )
+from tripscope.metadata.sources import register_source
 from tripscope.pipeline import lake
-from tripscope.pipeline.acquire import AcquiredFile, acquire, inspect_parquet
+from tripscope.pipeline.acquire import AcquiredFile, acquire, inspect_csv, inspect_parquet
 from tripscope.pipeline.canonical import map_source_schema
 from tripscope.pipeline.clickhouse_load import LoadVerification, load_partition, load_zones
 from tripscope.pipeline.manifest import Manifest, SourceSpec
@@ -80,11 +81,18 @@ class RunSummary:
 class _RunRecorder:
     """Persists stage progress and timings so job status is visible while a run is in flight."""
 
-    def __init__(self, factory: sessionmaker[Session], run_id: uuid.UUID) -> None:
+    def __init__(
+        self,
+        factory: sessionmaker[Session],
+        run_id: uuid.UUID,
+        logs: _RunLogHandler,
+        cancel_check: Callable[[], None],
+    ) -> None:
         self._factory = factory
         self.run_id = run_id
         self.timings: dict[str, float] = {}
-        self.events: list[dict[str, Any]] = []
+        self.logs = logs
+        self.cancel_check = cancel_check
 
     def _update(self, **fields: Any) -> None:
         with self._factory() as session, session.begin():
@@ -93,9 +101,14 @@ class _RunRecorder:
             for key, value in fields.items():
                 setattr(run, key, value)
 
+    def flush_logs(self) -> None:
+        self._update(log_events=list(self.logs.entries))
+
     @contextmanager
     def stage(self, name: str) -> Iterator[None]:
+        self.cancel_check()
         self._update(current_stage=name)
+        log.info("stage started", extra={"stage": name})
         started = time.perf_counter()
         status = "failed"
         try:
@@ -104,15 +117,45 @@ class _RunRecorder:
         finally:
             seconds = round(time.perf_counter() - started, 3)
             self.timings[name] = seconds
-            self.events.append(
-                {"stage": name, "status": status, "seconds": seconds, "at": _now().isoformat()}
-            )
-            self._update(stage_timings=dict(self.timings), log_events=list(self.events))
             log.info("pipeline stage", extra={"stage": name, "status": status, "seconds": seconds})
+            self._update(stage_timings=dict(self.timings), log_events=list(self.logs.entries))
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+class JobCancelledError(PipelineError):
+    code = "job_cancelled"
+
+
+MAX_LOG_EVENTS = 500
+
+
+class _RunLogHandler(logging.Handler):
+    """Collects this run's TripScope log records (same thread) for the run's log view, secrets redacted."""
+
+    _SKIP = frozenset(vars(logging.makeLogRecord({}))) | {"message", "asctime"}
+
+    def __init__(self, secrets: list[str]) -> None:
+        super().__init__(level=logging.INFO)
+        self.thread_id = threading.get_ident()
+        self.secrets = secrets
+        self.entries: list[dict[str, Any]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.thread != self.thread_id or len(self.entries) >= MAX_LOG_EVENTS:
+            return
+        fields = {k: v for k, v in vars(record).items() if k not in self._SKIP and not k.startswith("_")}
+        self.entries.append(
+            {
+                "at": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
+                "level": record.levelname.lower(),
+                "logger": record.name,
+                "message": redact(record.getMessage(), self.secrets),
+                "fields": {k: redact(str(v), self.secrets) for k, v in fields.items()},
+            }
+        )
 
 
 @contextmanager
@@ -127,29 +170,6 @@ def _source_lock(engine: Engine, source_key: str) -> Iterator[None]:
             yield
         finally:
             conn.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": source_key})
-
-
-def _register(session: Session, manifest: Manifest, source: SourceSpec) -> DataSource:
-    spec = manifest.datasets[source.dataset]
-    dataset = session.get(Dataset, source.dataset)
-    if dataset is None:
-        dataset = Dataset(id=source.dataset)
-        session.add(dataset)
-    dataset.name, dataset.taxi_type = spec.name, spec.taxi_type
-    dataset.description, dataset.source_attribution = spec.description, spec.source_attribution
-
-    data_source = session.scalar(select(DataSource).where(DataSource.source_key == source.key))
-    if data_source is None:
-        data_source = DataSource(source_key=source.key)
-        session.add(data_source)
-    data_source.dataset_id = source.dataset
-    data_source.taxi_type = spec.taxi_type
-    data_source.data_period = source.period_start
-    data_source.source_uri = source.uri
-    data_source.file_name = source.file_name
-    data_source.file_format = source.format
-    session.flush()
-    return data_source
 
 
 def _acquire_reference_zones(deps: PipelineDeps, work: Path) -> tuple[list[Zone], str]:
@@ -177,18 +197,36 @@ def _acquire_reference_zones(deps: PipelineDeps, work: Path) -> tuple[list[Zone]
 
 
 def run_source(
-    deps: PipelineDeps, source_key: str, *, trigger: str = "cli", requested_by: uuid.UUID | None = None
+    deps: PipelineDeps,
+    source_key: str,
+    *,
+    trigger: str = "cli",
+    requested_by: uuid.UUID | None = None,
+    job_id: uuid.UUID | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> RunSummary:
+    """Run one source. With `job_id`, executes a job a worker has already claimed (status running);
+    otherwise creates a new job (CLI). `cancel_event` is set by the worker when a cancel is requested."""
     source = deps.manifest.get_source(source_key)
     with _source_lock(deps.engine, source.key):
-        return _SourceRun(deps, source, trigger=trigger, requested_by=requested_by).execute()
+        run = _SourceRun(
+            deps, source, trigger=trigger, requested_by=requested_by, job_id=job_id, cancel_event=cancel_event
+        )
+        return run.execute()
 
 
 class _SourceRun:
     """State for a single run of one source; each method is one pipeline stage."""
 
     def __init__(
-        self, deps: PipelineDeps, source: SourceSpec, *, trigger: str, requested_by: uuid.UUID | None
+        self,
+        deps: PipelineDeps,
+        source: SourceSpec,
+        *,
+        trigger: str,
+        requested_by: uuid.UUID | None,
+        job_id: uuid.UUID | None,
+        cancel_event: threading.Event | None,
     ) -> None:
         self.deps, self.source = deps, source
         self.factory = deps.session_factory
@@ -198,21 +236,33 @@ class _SourceRun:
         self.acquired: AcquiredFile | None = None
         self.result: TransformResult | None = None
         self.schema_version = ""
+        self.cancel_event = cancel_event
         with self.factory() as session, session.begin():
-            data_source = _register(session, deps.manifest, source)
-            attempts = (
-                session.query(IngestionJob).filter(IngestionJob.data_source_id == data_source.id).count()
-            )
-            job = IngestionJob(
-                data_source_id=data_source.id,
-                status=JobStatus.RUNNING,
-                trigger=trigger,
-                requested_by=requested_by,
-                attempt=attempts + 1,
-                started_at=self.started,
-            )
-            session.add(job)
-            session.flush()
+            data_source = register_source(session, deps.manifest, source)
+            if job_id is None:
+                attempts = (
+                    session.query(IngestionJob).filter(IngestionJob.data_source_id == data_source.id).count()
+                )
+                job = IngestionJob(
+                    data_source_id=data_source.id,
+                    status=JobStatus.RUNNING,
+                    trigger=trigger,
+                    requested_by=requested_by,
+                    attempt=attempts + 1,
+                    started_at=self.started,
+                )
+                session.add(job)
+                session.flush()
+            else:
+                claimed = session.get(IngestionJob, job_id)
+                if (
+                    claimed is None
+                    or claimed.status != JobStatus.RUNNING
+                    or claimed.data_source_id != data_source.id
+                ):
+                    raise PipelineError(f"job {job_id} is not a running job for {source.key}")
+                job = claimed
+                self.started = job.started_at or self.started
             run = ProcessingRun(
                 job_id=job.id,
                 status=JobStatus.RUNNING,
@@ -222,15 +272,43 @@ class _SourceRun:
             session.add(run)
             session.flush()
             self.job_id, self.run_id, self.data_source_id = job.id, run.id, data_source.id
-        self.recorder = _RunRecorder(self.factory, self.run_id)
+        self.logs = _RunLogHandler(deps.settings.secret_values())
+        self.recorder = _RunRecorder(self.factory, self.run_id, self.logs, self._check_cancelled)
         self.run_dir = self.work / "runs" / str(self.run_id)
 
+    def _cancel_requested(self) -> bool:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            return True
+        with self.factory() as session:
+            requested = session.scalar(
+                select(IngestionJob.cancel_requested_at).where(IngestionJob.id == self.job_id)
+            )
+        return requested is not None
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_requested():
+            raise JobCancelledError("cancelled by request")
+
     def execute(self) -> RunSummary:
+        tripscope_logger = logging.getLogger("tripscope")
+        tripscope_logger.addHandler(self.logs)
         try:
+            log.info("run started", extra={"source": self.source.key, "run_id": str(self.run_id)})
             with self.recorder.stage("acquire"):
                 acquired = self._acquire()
             with self.recorder.stage("inspect"):
-                inspection = inspect_parquet(acquired.local_path)
+                if self.source.format == "csv":
+                    inspection = inspect_csv(acquired.local_path)
+                else:
+                    inspection = inspect_parquet(acquired.local_path)
+                log.info(
+                    "source inspected",
+                    extra={
+                        "rows": inspection.num_rows,
+                        "columns": len(inspection.columns),
+                        "format": self.source.format,
+                    },
+                )
                 mapping = map_source_schema(self.taxi_type, inspection.columns)
                 self.schema_version = mapping.schema_version
             with self.recorder.stage("store_raw"):
@@ -260,6 +338,8 @@ class _SourceRun:
                     mapping=mapping,
                     rules=self.deps.rules,
                     mapped_zone_ids=mapped_zone_ids(zones),
+                    source_format=self.source.format,
+                    timestamp_format=self.source.timestamp_format,
                 )
                 result = transform_file(self.deps.spark_factory(), acquired.local_path, ctx, self.run_dir)
                 self.result = result
@@ -284,15 +364,24 @@ class _SourceRun:
                     run_id=str(self.run_id),
                     expected_rows=result.accepted_rows,
                     expected_amount_sum=result.accepted_total_amount_sum,
+                    before_publish=self._check_cancelled,
                 )
             with self.recorder.stage("publish"):
                 duration = self._publish(result, verification, curated, quarantine)
         except Exception as exc:
-            summary = redact(f"{type(exc).__name__}: {exc}", self.deps.settings.secret_values())[:2000]
-            self._record_failure(summary)
-            log.error("pipeline run failed", extra={"run_id": str(self.run_id), "error": summary})
+            cancelled = isinstance(exc, JobCancelledError) or self._cancel_requested()
+            if cancelled:
+                stage = self.recorder.timings and list(self.recorder.timings)[-1]
+                summary = f"cancelled by request (during {stage or 'start-up'}); nothing was published"
+            else:
+                summary = redact(f"{type(exc).__name__}: {exc}", self.deps.settings.secret_values())[:2000]
+            log.error("pipeline run ended", extra={"run_id": str(self.run_id), "error": summary})
+            self._record_failure(summary, cancelled=cancelled)
+            if cancelled:
+                raise JobCancelledError(f"run {self.run_id} {summary}") from exc
             raise PipelineError(f"run {self.run_id} failed: {summary}") from exc
         finally:
+            tripscope_logger.removeHandler(self.logs)
             shutil.rmtree(self.run_dir, ignore_errors=True)
 
         return RunSummary(
@@ -396,23 +485,28 @@ class _SourceRun:
                 None,
             )
             job.status, job.finished_at = JobStatus.COMPLETED, finished
+            log.info(
+                "period published", extra={"period": self.source.period, "rows": verification.published_rows}
+            )
+            run.log_events = list(self.logs.entries)
         return duration
 
-    def _record_failure(self, summary: str) -> None:
+    def _record_failure(self, summary: str, *, cancelled: bool) -> None:
         finished = _now()
         duration = round((finished - self.started).total_seconds(), 3)
+        status = JobStatus.CANCELLED if cancelled else JobStatus.FAILED
         with self.factory() as session, session.begin():
             run = session.get(ProcessingRun, self.run_id)
             job = session.get(IngestionJob, self.job_id)
             assert run is not None and job is not None
-            run.status, run.completed_at, run.error_summary = JobStatus.FAILED, finished, summary
-            run.duration_seconds = duration
-            job.status, job.finished_at, job.error_summary = JobStatus.FAILED, finished, summary
+            run.status, run.completed_at, run.error_summary = status, finished, summary
+            run.duration_seconds, run.log_events = duration, list(self.logs.entries)
+            job.status, job.finished_at, job.error_summary = status, finished, summary
             if (
                 self.result is not None
                 and self.acquired is not None
                 and session.get(DataQualityMetrics, self.run_id) is None
-            ):
+            ):  # quality of a run that did not publish is still worth keeping
                 session.add(
                     _quality_row(
                         self.run_id,
@@ -423,7 +517,7 @@ class _SourceRun:
                         started=self.started,
                         completed=finished,
                         duration=duration,
-                        status="failed",
+                        status=status.value,
                         error=summary,
                     )
                 )
