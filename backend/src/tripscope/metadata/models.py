@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import date, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import (
     BigInteger,
@@ -26,7 +26,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
-    type_annotation_map = {dict[str, Any]: JSONB, list[Any]: JSONB}
+    type_annotation_map: ClassVar[dict[Any, Any]] = {dict[str, Any]: JSONB, list[Any]: JSONB}
 
 
 def _uuid() -> uuid.UUID:
@@ -54,7 +54,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True)
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(String(255))
-    role: Mapped[Role] = mapped_column(Enum(Role, name="user_role", values_callable=lambda e: [m.value for m in e]))
+    role: Mapped[Role] = mapped_column(
+        Enum(Role, name="user_role", values_callable=lambda e: [m.value for m in e])
+    )
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -70,7 +72,9 @@ class Dataset(Base):
     source_attribution: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    periods: Mapped[list[DatasetPeriod]] = relationship(back_populates="dataset", order_by="DatasetPeriod.data_period")
+    periods: Mapped[list[DatasetPeriod]] = relationship(
+        back_populates="dataset", order_by="DatasetPeriod.data_period"
+    )
 
 
 class DataSource(Base):
@@ -207,4 +211,7 @@ class AuditEvent(Base):
     client_ip: Mapped[str | None] = mapped_column(String(64))
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
-    __table_args__ = (Index("ix_audit_events_occurred_at", "occurred_at"), Index("ix_audit_events_action", "action"))
+    __table_args__ = (
+        Index("ix_audit_events_occurred_at", "occurred_at"),
+        Index("ix_audit_events_action", "action"),
+    )

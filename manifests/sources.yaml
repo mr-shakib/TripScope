@@ -1,0 +1,33 @@
+# TripScope source manifest.
+# Each source is one immutable monthly TLC file. URLs are copied from the official TLC portal
+# (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) and are configuration, not code.
+# expected_sha256 pins the exact bytes we validated; a changed upstream file fails loudly instead of
+# silently changing published numbers. Remove the pin deliberately to accept a TLC revision.
+version: 1
+
+allowed_hosts:
+  - d37ci6vzurychx.cloudfront.net
+
+datasets:
+  nyc-tlc-yellow:
+    name: NYC TLC Yellow Taxi Trip Records
+    taxi_type: yellow
+    description: Monthly Yellow Taxi trip records published by the NYC Taxi & Limousine Commission.
+    source_attribution: >-
+      NYC Taxi & Limousine Commission (TLC) Trip Record Data,
+      https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+
+reference:
+  taxi_zones:
+    uri: https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+    expected_sha256: 1a99e105092230f8620f301edcca7f80d3080642ff404d28ed957d3fa222c8ed
+    retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+
+sources:
+  - key: yellow-2025-01
+    dataset: nyc-tlc-yellow
+    period: "2025-01"
+    format: parquet
+    uri: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-01.parquet
+    expected_sha256: 9af277e4c0d3f9deb30644da822981e1e7df6af58313170fd3aa8a474485488a
+    retrieved_from: https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page

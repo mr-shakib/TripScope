@@ -1013,6 +1013,7 @@ dev = [
     { name = "boto3-stubs", extra = ["s3"] },
     { name = "mypy" },
     { name = "pytest" },
+    { name = "python-dotenv" },
     { name = "ruff" },
     { name = "types-pyyaml" },
 ]
@@ -1042,6 +1043,7 @@ dev = [
     { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.43" },
     { name = "mypy", specifier = ">=2.4,<3" },
     { name = "pytest", specifier = ">=9.1,<10" },
+    { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "ruff", specifier = ">=0.16,<0.17" },
     { name = "types-pyyaml", specifier = ">=6.0" },
 ]

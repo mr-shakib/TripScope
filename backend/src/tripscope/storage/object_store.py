@@ -80,7 +80,8 @@ class ObjectStore:
                 log.info("raw object already present", extra={"key": key})
                 return False
             raise PipelineError(
-                f"raw object {key} already exists with a different checksum; refusing to overwrite immutable input"
+                f"raw object {key} already exists with a different checksum; "
+                "refusing to overwrite immutable input"
             )
         self.put_file(key, path, metadata={**metadata, "sha256": sha256})
         return True
