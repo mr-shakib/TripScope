@@ -1,7 +1,7 @@
 name: tripscope
 
 # Core data services start with `docker compose up -d`.
-# Application containers (api, web) and the Spark pipeline runner use profiles:
+# Application containers (api, worker, web) and the one-off Spark runner use profiles:
 #   docker compose --profile app up -d --build
 #   docker compose --profile pipeline run --rm pipeline run --source yellow-2025-01
 # All host ports bind to 127.0.0.1 only.
@@ -135,6 +135,9 @@ services:
       S3_BUCKET: ${S3_BUCKET:-tripscope-lake}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
+      MANIFEST_PATH: /app/manifests/sources.yaml
+    volumes:
+      - ./manifests:/app/manifests:ro
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
     depends_on:
@@ -145,18 +148,22 @@ services:
   web:
     profiles: ["app"]
     image: tripscope-web:dev
-    build: { context: ., dockerfile: infrastructure/docker/web.Dockerfile }
+    build:
+      context: .
+      dockerfile: infrastructure/docker/web.Dockerfile
+      args:
+        TRIPSCOPE_API_ORIGIN: http://api:8000
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-8080}:8080"
     depends_on:
       api: { condition: service_healthy }
 
-  # One-off Spark runs: docker compose --profile pipeline run --rm pipeline run --source yellow-2025-01
-  pipeline:
-    profiles: ["pipeline"]
+  # Processes jobs queued through the API (ADR-15). Finishes the current job on stop when it can.
+  worker:
+    profiles: ["app"]
     image: tripscope-pipeline:dev
-    build: { context: ., dockerfile: infrastructure/docker/backend.Dockerfile, target: pipeline }
-    environment:
+    command: ["worker"]
+    environment: &pipeline-env
       <<: *postgres-env
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
@@ -170,6 +177,22 @@ services:
       PIPELINE_WORK_DIR: /data/work
       PIPELINE_MAX_SOURCE_MB: ${PIPELINE_MAX_SOURCE_MB:-500}
       SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-4g}
+      MANIFEST_PATH: /app/manifests/sources.yaml
+    volumes:
+      - pipeline-work:/data/work
+      - ./manifests:/app/manifests:ro
+    stop_grace_period: 2m
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+      seaweedfs: { condition: service_healthy }
+
+  # One-off Spark runs: docker compose --profile pipeline run --rm pipeline run --source yellow-2025-01
+  pipeline:
+    profiles: ["pipeline"]
+    image: tripscope-pipeline:dev
+    build: { context: ., dockerfile: infrastructure/docker/backend.Dockerfile, target: pipeline }
+    environment: *pipeline-env
     volumes:
       - pipeline-work:/data/work
       - ./manifests:/app/manifests:ro

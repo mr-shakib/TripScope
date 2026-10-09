@@ -23,8 +23,12 @@ exports, reports and AI tools, so a metric means the same thing everywhere.
 | `avg_trip_distance` | Average trip distance | `avgIf(trip_distance, is_distance_valid)` | miles | `0 < trip_distance ≤ 200` |
 | `avg_trip_duration_minutes` | Average trip duration | `avgIf(trip_duration_minutes, is_duration_valid)` | minutes | `0 < duration ≤ 720` |
 
-Time series group the same expressions by `pickup_date` (daily), `toStartOfHour(pickup_datetime)` (hourly,
-range ≤ 62 days) or `toStartOfMonth(pickup_date)` (monthly).
+Time series and breakdowns group the same expressions by pickup date, hour (range ≤ 62 days), month, hour of
+day, ISO weekday or pickup zone.
+
+When a query is answered from `trips_hourly_agg`, each metric is recomputed from stored counts and sums of valid
+values — e.g. average distance = Σ valid distance ÷ number of trips with a valid distance — and a total over zero
+valid rows is NULL, never 0. Responses name the table that answered (`meta.source_table`).
 
 ## Caveats that apply to every result
 
@@ -56,16 +60,17 @@ range ≤ 62 days) or `toStartOfMonth(pickup_date)` (monthly).
 | Passenger count NULL or 0 | flag `passenger_count_missing_or_zero` | — |
 | Zone ID not in the lookup, or 264/265 | flag `pickup_zone_unmapped` / `dropoff_zone_unmapped` | — |
 
-### Observed on 2025-01 (run `d786cb06`)
+### Observed on 2025-01 → 2025-06 (published runs)
 
-Accepted 3,475,080 trips. Among accepted trips:
+24,083,384 rows read; 24,082,454 accepted; 930 quarantined (793 drop-off before pickup, 137 outside the file's
+month, 0 duplicates). Among accepted trips:
 
-| Flag | Trips |
-|---|---|
-| `invalid_amount` | 144,442 |
-| `invalid_distance` | 91,015 |
-| `invalid_duration` | 2,967 |
-| `implausible_speed` | 863 |
-| `passenger_count_missing_or_zero` | 564,686 (mostly Flex Fare, `payment_type = 0`, where TLC leaves the field NULL) |
-| `pickup_zone_unmapped` | 9,521 |
-| `dropoff_zone_unmapped` | 24,062 |
+| Flag | Trips | Share |
+|---|---|---|
+| `passenger_count_missing_or_zero` | 5,556,829 | 23.07% (mostly Flex Fare, `payment_type = 0`, where TLC leaves the field NULL) |
+| `invalid_amount` | 1,325,538 | 5.50% |
+| `invalid_distance` | 663,092 | 2.75% |
+| `invalid_duration` | 203,010 | 0.84% |
+| `dropoff_zone_unmapped` | 153,948 | 0.64% |
+| `pickup_zone_unmapped` | 54,664 | 0.23% |
+| `implausible_speed` | 5,570 | 0.02% |
