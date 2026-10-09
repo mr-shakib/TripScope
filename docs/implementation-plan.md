@@ -1,6 +1,6 @@
 # TripScope — Implementation Plan
 
-Status: living document. Updated at the end of every phase. **Phase 1 complete; next: Phase 2.**
+Status: living document. Updated at the end of every phase. **Phase 1 complete; Phase 2 in progress.**
 Spec: [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) (section references below use `§`).
 
 ---
@@ -68,6 +68,10 @@ they are reported as **unmapped**, never assigned a guessed name.
 | ADR-11 | **AI provider = OpenAI-compatible adapter** (configurable `base_url`, model, key) covering **DeepSeek API and local servers** (Ollama / vLLM / llama.cpp). Capability flags (`supports_tools`, `supports_json_schema`) choose native tool calling or a validated JSON-plan fallback. `LLM_PROVIDER=disabled` is the default. | The team will use a local model or DeepSeek (§10.4). Phase 5 only — not built until the batch path, dashboard and exports are stable. |
 | ADR-12 | **Frontend: Vite + React 19 + TypeScript + Tailwind v4 + ECharts (direct, tree-shaken) + TanStack Query + React Router.** Dev server proxies `/api` to FastAPI so cookies stay same-origin; in Docker, nginx serves the build and proxies `/api`. | §6.1 stack; same-origin avoids CORS-with-credentials complexity. |
 | ADR-13 | **Kafka is out of scope** until the batch pipeline, dashboard, report exports and AI workflow are stable (user directive + §16 Phase 7). | — |
+| ADR-14 | **Frontend moves to Next.js 16 (App Router)** (user directive, Phase 2). Pages are client components fed by TanStack Query through same-origin rewrites (`/api/*` → FastAPI); `proxy.ts` redirects signed-out visitors and sets a per-request CSP nonce; Docker runs the standalone server. **Light theme first**, dark theme later. | Same-origin keeps the HttpOnly session cookie first-party with no CORS; the API stays the only place authorization is enforced. |
+| ADR-15 | **PostgreSQL-backed job queue + worker** (`SELECT … FOR UPDATE SKIP LOCKED`) instead of Celery/Redis. API creates `queued` jobs; a worker container claims, heartbeats and runs them; cancel = flag checked between stages plus Spark job cancellation; jobs on a dead worker are failed by heartbeat timeout. | One fewer service; job state already lives in PostgreSQL; spec allows a simpler worker first (§6.1). |
+| ADR-16 | **Pre-aggregates built explicitly per partition** from the verified staging data, then swapped with `REPLACE PARTITION` together with the fact table. Queries use an aggregate only when every requested filter is covered by its dimensions; results must equal raw queries (tested). | Materialized views do not fire on `REPLACE PARTITION`; explicit builds keep aggregates consistent with the published run. |
+| ADR-17 | **CSV sources are validated structurally before Spark** (header, consistent field count on every line, server-error payloads) and rejected if truncated. | A real NYC Open Data export in this workspace ends with a `{"error": true, "status": 500}` body after 1.82M rows (data stops 2023-01-20); publishing it would misstate coverage. |
 
 ### 2.1 Logical flow (Phase 1)
 
@@ -221,11 +225,17 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - The login throttle is per process; sessions are stateless JWTs (revocation planned for Phase 6).
 - The API image carries pyarrow and boto3, which only the pipeline needs (~700 MB image); slimming is planned.
 
-### Phase 2 — Complete batch pipeline
-- ☐ Multiple files/periods (3–6 months contiguous), schema-version registry + drift report across files
-- ☐ CSV input path (e.g. NYC Open Data export format), upload with size/type validation
-- ☐ API-triggered ingestion jobs on a worker (queue, retry, cancel), job logs endpoint
-- ☐ Pre-aggregated ClickHouse tables (`trips_daily`, `trips_hourly`, zone/day, buckets, `data_quality_daily`)
+### Phase 2 — Complete batch pipeline + operations UI (Next.js) — **in progress**
+- ☐ Six contiguous months (2025-01 → 2025-06) in the manifest with pinned checksums; all published
+- ☐ CSV sources (NYC Open Data export format): strict structural validation, explicit timestamp format, truncated exports rejected
+- ☐ Schema registry and drift report across files (`GET /datasets/{id}/schema`)
+- ☐ API-triggered jobs: create / list / get / retry / cancel, run logs endpoint, audit events; PostgreSQL queue + worker container with heartbeat and cancellation
+- ☐ Pre-aggregates (`trips_hourly_agg`, `trips_dropoff_daily_agg`, `fare_distance_buckets`, `data_quality_daily`) built per partition; query routing with raw-vs-aggregate equality tests; `build-aggregates` command
+- ☐ Quality API (`GET /datasets/{id}/quality`): per-period metrics, quarantine reasons, flags, missingness, daily flag trends
+- ☐ Analytics additions served from aggregates: trips by hour, by weekday, top pickup zones (zone names from the TLC lookup)
+- ☐ Next.js frontend (light theme): Overview with global filters (date range, pickup zone, payment type, hours), KPI cards with sparklines, zoomable time series with click-to-drill, hour/weekday/zone charts with click-to-filter; Data Sources (queue runs); Processing Jobs (live status, stage timeline, logs, retry/cancel); Data Quality (quarantine, flags, missingness, schema drift)
+- ☐ Tests: backend unit + integration for every new path; Vitest; Playwright e2e for the new pages
+- ☐ Docs updated; PR merged
 
 ### Phase 3 — Dashboard and explorer
 - ☐ All FR-07 KPIs/charts, all filters, URL-synced filter state, drill-down by click, metric definitions panel
