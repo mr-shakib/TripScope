@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -15,17 +17,35 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tripscope.analytics.service import AnalyticsService
-from tripscope.api.routers import analytics, auth, datasets, health, jobs
+from tripscope.api.routers import analytics, auth, datasets, health, jobs, sources
 from tripscope.api.security import LoginThrottle
 from tripscope.core.errors import TripScopeError
 from tripscope.core.logging import configure_logging, request_id_var
 from tripscope.core.settings import Settings, get_settings
 from tripscope.metadata.db import make_engine, make_session_factory
+from tripscope.pipeline.manifest import Manifest, load_manifest
 from tripscope.storage.clickhouse import reader_client
 from tripscope.storage.object_store import ObjectStore
 
 log = logging.getLogger("tripscope.api")
 API_PREFIX = "/api/v1"
+
+
+class ManifestCache:
+    """Loads the source manifest, re-reading it only when the file changes."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._mtime: float | None = None
+        self._manifest: Manifest | None = None
+        self._lock = threading.Lock()
+
+    def __call__(self) -> Manifest:
+        with self._lock:
+            mtime = self.path.stat().st_mtime
+            if self._manifest is None or mtime != self._mtime:
+                self._manifest, self._mtime = load_manifest(self.path), mtime
+            return self._manifest
 
 
 def _error(status: int, code: str, message: str, details: Any = None) -> JSONResponse:
@@ -60,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_range_days=settings.analytics_max_range_days,
     )
     app.state.object_store = lambda: ObjectStore.from_settings(settings)
+    app.state.manifest = ManifestCache(settings.resolved_manifest_path)
 
     if settings.cors_origins:
         app.add_middleware(
@@ -130,6 +151,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.include_router(health.router)
-    for router in (auth.router, datasets.router, analytics.router, jobs.router):
+    for router in (auth.router, datasets.router, analytics.router, jobs.router, sources.router):
         app.include_router(router, prefix=API_PREFIX)
     return app

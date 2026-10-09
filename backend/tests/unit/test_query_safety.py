@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from tripscope.analytics.filters import AnalyticsFilters, TimeSeriesQuery
 from tripscope.analytics.metrics import METRICS
-from tripscope.analytics.query_builder import overview_query, time_series_query, where_clause
+from tripscope.analytics.query_builder import HOURLY_AGG, RAW, overview_query, time_series_query, where_clause
 from tripscope.core.identifiers import redact, validate_identifier
 
 PERIODS = [date(2025, 1, 1)]
@@ -115,6 +115,23 @@ def test_generated_sql_uses_only_known_identifiers() -> None:
         "bucket",
         "value",
         "trips",
+        "trip_count",
+        "toDateTime",
+        # hourly aggregate columns and helpers
+        "trips_hourly_agg",
+        "total_amount_valid_sum",
+        "amount_valid_trips",
+        "trip_distance_valid_sum",
+        "distance_valid_trips",
+        "trip_duration_valid_sum",
+        "duration_valid_trips",
+        "sum",
+        "nullIf",
+        "toFloat64",
+        "if",
+        "NULL",
+        "toIntervalHour",
+        "pickup_hour",
         "toStartOfHour",
         "pickup_datetime",
         "excluded__total_recorded_amount",
@@ -123,8 +140,13 @@ def test_generated_sql_uses_only_known_identifiers() -> None:
         "excluded__avg_trip_duration_minutes",
         *METRICS,
     }
-    sqls = [overview_query("tripscope", _where()).sql]
-    sqls += [time_series_query("tripscope", _where(), metric=m, granularity="hour").sql for m in METRICS]
+    sqls = []
+    for source in (RAW, HOURLY_AGG):
+        sqls.append(overview_query("tripscope", _where(), source).sql)
+        sqls += [
+            time_series_query("tripscope", _where(), metric=m, granularity="hour", source=source).sql
+            for m in METRICS
+        ]
     for sql in sqls:
         words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", sql))
         assert words <= allowed, words - allowed

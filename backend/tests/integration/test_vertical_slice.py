@@ -7,158 +7,28 @@ fixture Parquet (real 2025 schema) → acquire/validate → raw lake → Spark �
 
 from __future__ import annotations
 
-import argparse
-import hashlib
 import uuid
-from collections.abc import Iterator
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 import boto3
 import pytest
-from alembic import command
-from alembic.config import Config
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from tests.fixtures.tlc_fixture import expected_overview, write_fixture_parquet
+from tests.fixtures.tlc_fixture import expected_overview
 from tripscope.api.app import create_app
 from tripscope.core.errors import PipelineError
-from tripscope.core.passwords import hash_password
-from tripscope.core.settings import Settings, get_settings
-from tripscope.metadata.db import make_engine, make_session_factory
-from tripscope.metadata.models import DataQualityMetrics, DatasetPeriod, IngestionJob, JobStatus, Role, User
-from tripscope.pipeline.clickhouse_load import apply_migrations
-from tripscope.pipeline.manifest import Manifest
-from tripscope.pipeline.runner import PipelineDeps, run_source
-from tripscope.storage.clickhouse import reader_client, writer_client
-from tripscope.storage.object_store import ObjectStore
+from tripscope.metadata.models import DataQualityMetrics, DatasetPeriod, IngestionJob, JobStatus, Role
+from tripscope.pipeline.runner import run_source
+from tripscope.storage.clickhouse import reader_client
 
 pytestmark = [pytest.mark.integration, pytest.mark.spark]
 
-BACKEND = Path(__file__).resolve().parents[2]
-REPO = BACKEND.parent
-TEST_DB = "tripscope_test"
-TEST_BUCKET = "tripscope-test"
-PASSWORD = "integration-password-123"
-
-
-def _zone_csv(path: Path) -> None:
-    lines = ['"LocationID","Borough","Zone","service_zone"']
-    lines += [f'{i},"Borough{i}","Zone {i}","Boro Zone"' for i in range(1, 264)]
-    lines += ['264,"Unknown","N/A","N/A"', '265,"N/A","Outside of NYC","N/A"']
-    path.write_text("\n".join(lines) + "\n")
-
-
-@pytest.fixture(scope="module")
-def settings() -> Settings:
-    try:
-        base = get_settings()
-    except Exception as exc:  # pragma: no cover - environment guard
-        pytest.skip(f"settings unavailable ({type(exc).__name__}); run `make env` and `docker compose up -d`")
-    isolated = base.model_copy(
-        update={"postgres_db": TEST_DB, "clickhouse_database": TEST_DB, "s3_bucket": TEST_BUCKET}
-    )
-    # Guard: this module drops schemas, tables and objects; it must only ever touch the test resources.
-    assert isolated.database_url.endswith(f"/{TEST_DB}") and isolated.s3_bucket == TEST_BUCKET
-    return isolated
-
-
-@pytest.fixture(scope="module")
-def env(settings: Settings, tmp_path_factory: pytest.TempPathFactory, spark: Any) -> Iterator[dict[str, Any]]:
-    engine = make_engine(settings.database_url)
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception:  # pragma: no cover - environment guard
-        pytest.skip("PostgreSQL not reachable; start `docker compose up -d`")
-
-    # Fresh metadata schema.
-    with engine.begin() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public"))
-    cfg = Config(str(BACKEND / "alembic.ini"))
-    cfg.cmd_opts = argparse.Namespace(x=[f"database_url={settings.database_url}"])
-    command.upgrade(cfg, "head")
-
-    # Fresh ClickHouse tables and lake bucket.
-    writer = writer_client(settings)
-    for table in ("taxi_trips", "taxi_zones", "schema_migrations"):
-        writer.command(f"DROP TABLE IF EXISTS {TEST_DB}.{table}")
-    apply_migrations(writer, TEST_DB)
-    store = ObjectStore.from_settings(settings)
-    store.delete_prefix("")
-
-    work = tmp_path_factory.mktemp("integration")
-    source_dir = work / "sources"
-    rows = write_fixture_parquet(source_dir / "yellow_tripdata_2025-01.parquet")
-    _zone_csv(source_dir / "taxi_zone_lookup.csv")
-    sha = hashlib.sha256((source_dir / "yellow_tripdata_2025-01.parquet").read_bytes()).hexdigest()
-    manifest = Manifest.model_validate(
-        {
-            "version": 1,
-            "base_dir": work,
-            "datasets": {
-                "nyc-tlc-yellow": {
-                    "name": "Yellow (fixture)",
-                    "taxi_type": "yellow",
-                    "source_attribution": "test fixture",
-                }
-            },
-            "reference": {"taxi_zones": {"uri": "file://sources/taxi_zone_lookup.csv"}},
-            "sources": [
-                {
-                    "key": "fixture-2025-01",
-                    "dataset": "nyc-tlc-yellow",
-                    "period": "2025-01",
-                    "format": "parquet",
-                    "uri": "file://sources/yellow_tripdata_2025-01.parquet",
-                    "expected_sha256": sha,
-                },
-                {
-                    "key": "fixture-bad-checksum",
-                    "dataset": "nyc-tlc-yellow",
-                    "period": "2025-01",
-                    "format": "parquet",
-                    "uri": "file://sources/yellow_tripdata_2025-01.parquet",
-                    "expected_sha256": "0" * 64,
-                },
-            ],
-        }
-    )
-    deps = PipelineDeps(
-        settings=settings.model_copy(update={"pipeline_work_dir": work / "work"}),
-        manifest=manifest,
-        engine=engine,
-        session_factory=make_session_factory(engine),
-        store=store,
-        clickhouse=writer,
-        clickhouse_database=TEST_DB,
-        spark_factory=lambda: spark,
-    )
-    factory = make_session_factory(engine)
-    with factory() as session, session.begin():
-        for role in Role:
-            session.add(
-                User(
-                    email=f"{role.value}@test.local",
-                    display_name=role.value,
-                    password_hash=hash_password(PASSWORD),
-                    role=role,
-                )
-            )
-    yield {
-        "deps": deps,
-        "rows": rows,
-        "factory": factory,
-        "settings": settings,
-        "writer": writer,
-        "store": store,
-    }
-    engine.dispose()
+from tests.integration.conftest import PASSWORD, REPO, TEST_BUCKET, TEST_DB  # noqa: E402
 
 
 @pytest.fixture(scope="module")
