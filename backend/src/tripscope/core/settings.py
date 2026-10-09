@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     pipeline_max_source_mb: int = Field(default=500, ge=1, le=10_000)
     spark_driver_memory: str = "4g"
     spark_master: str = "local[*]"
+    spark_java_home: Path | None = None  # full JDK 17+; defaults to the JVM on PATH / JAVA_HOME
+
+    @field_validator("spark_java_home", mode="before")
+    @classmethod
+    def _empty_java_home(cls, value: object) -> object:
+        return None if value == "" else value
 
     analytics_query_timeout_seconds: int = Field(default=30, ge=1, le=300)
     analytics_max_range_days: int = Field(default=1100, ge=1, le=5000)
@@ -118,4 +124,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]  # populated from the environment
+    return Settings()  # populated from the environment
