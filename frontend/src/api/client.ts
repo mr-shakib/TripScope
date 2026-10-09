@@ -17,6 +17,7 @@ export class ApiError extends Error {
 
 type QueryValue = string | number | undefined | null | readonly (string | number)[];
 
+
 export function toQueryString(params: Record<string, QueryValue>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
