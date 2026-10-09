@@ -1,0 +1,20 @@
+<!-- TripScope ClickHouse server overrides. Secrets are read from the container environment, never stored here. -->
+<clickhouse>
+    <!-- Columns hold NYC local wall-clock time without conversion (see docs/implementation-plan.md ADR-06). -->
+    <timezone>UTC</timezone>
+
+    <logger>
+        <level>warning</level>
+        <console>true</console>
+    </logger>
+
+    <!-- Read-only access to the data lake. Used by the pipeline writer through s3(tripscope_lake, filename=...). -->
+    <named_collections>
+        <tripscope_lake>
+            <url from_env="TRIPSCOPE_LAKE_ENDPOINT"/>
+            <access_key_id from_env="S3_CLICKHOUSE_ACCESS_KEY"/>
+            <secret_access_key from_env="S3_CLICKHOUSE_SECRET_KEY"/>
+            <format>Parquet</format>
+        </tripscope_lake>
+    </named_collections>
+</clickhouse>
