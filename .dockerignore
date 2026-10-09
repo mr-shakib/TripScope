@@ -1,0 +1,16 @@
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+data
+.env
+.env.*
+!.env.example
+.git
+*.parquet
+*.csv

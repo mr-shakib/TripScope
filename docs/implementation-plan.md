@@ -1,6 +1,6 @@
 # TripScope — Implementation Plan
 
-Status: living document. Updated at the end of every phase.
+Status: living document. Updated at the end of every phase. **Phase 1 complete; next: Phase 2.**
 Spec: [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) (section references below use `§`).
 
 ---
@@ -181,20 +181,45 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - ☑ Choose the initial file (2025-01 Yellow); confirm code meanings from the official dictionary
 - ☑ Architecture decisions, schema mapping, cleaning rules, metric formulas (this document)
 
-### Phase 1 — Vertical slice (§16)
-- ☐ Docker Compose: PostgreSQL, ClickHouse, MinIO with health checks; init scripts (DBs, users, tables, bucket)
-- ☐ `.env.example`, settings with fail-safe validation, JSON structured logging
-- ☐ Source manifest + acquire step (download/local, size limit, sha256, Parquet magic + footer, required columns, immutable raw upload) — FR-02
-- ☐ Schema inspection + canonical mapping (case-insensitive, unavailable fields recorded) — FR-05
-- ☐ Spark transform: normalize, quarantine, flag, derive; quality metrics (§7.3) — FR-04/05
-- ☐ Curated + quarantine Parquet to MinIO (run-scoped paths) — FR-06, §8.3
-- ☐ ClickHouse staging load from MinIO, verification, `REPLACE PARTITION`, publish — §7.1 steps 10–12
-- ☐ PostgreSQL metadata (Alembic): users, data_sources, datasets, dataset_periods, ingestion_jobs, processing_runs, data_quality_metrics, audit_events — FR-06, §8.1
-- ☐ FastAPI: `/health`, `/ready`, auth (login/logout/me), `/datasets`, `/analytics/overview`, `/analytics/trips-over-time`; request IDs; consistent error objects — §9
-- ☐ Frontend: login, Overview page with date filters, KPI cards with definitions, trips-over-time line chart, coverage, loading/empty/error states
-- ☐ Tests: unit (mapping, rules, filters, query builder safety, auth), integration (fixture → Spark → MinIO → ClickHouse → API exact values), e2e smoke
-- ☐ Run on the real 2025-01 file; record counts, durations and quality metrics
-- ☐ README quick start; commit, push, PR, merge
+### Phase 1 — Vertical slice (§16) — **complete (2026-10-09)**
+- ☑ Docker Compose: PostgreSQL, ClickHouse, SeaweedFS (S3) with health checks; init scripts (DBs, users, buckets); `app` and `pipeline` profiles
+- ☑ `.env.example`, `make env`, settings that refuse placeholder secrets, JSON structured logging
+- ☑ Source manifest + acquire (allow-listed HTTPS, size cap, sha256 pin, PAR1 + footer, required columns, immutable raw upload) — FR-02
+- ☑ Schema inspection + canonical mapping (case-insensitive, unavailable fields recorded, schema fingerprint) — FR-05
+- ☑ Spark transform: normalise, quarantine, flag, derive; §7.3 quality metrics persisted — FR-04/05
+- ☑ Curated + quarantine Parquet in the lake under run-scoped paths — FR-06, §8.3
+- ☑ ClickHouse staging load from the lake, exact verification, `REPLACE PARTITION`, publish — §7.1 steps 10–12
+- ☑ PostgreSQL metadata via Alembic 0001 (users, datasets, data_sources, dataset_periods, ingestion_jobs, processing_runs, data_quality_metrics, audit_events)
+- ☑ FastAPI: `/health`, `/ready`, auth (login/logout/me), `/datasets`, `/analytics/overview`, `/analytics/trips-over-time`, `/ingestion-jobs`; request IDs; consistent errors
+- ☑ Frontend: sign-in, Overview with date filters, KPI tiles with definitions, trips-over-time chart + table view, loading/empty/error states, light/dark
+- ☑ Tests: 63 backend unit, 10 integration, 10 frontend unit, 2 Playwright e2e (dev server and container build)
+- ☑ Real 2025-01 file processed on the host and in the container
+- ☑ README quick start, architecture, data dictionary, metric definitions, security; PR merged
+
+**Verification record (Phase 1)**
+
+| Check | Result |
+|---|---|
+| Real file `yellow_tripdata_2025-01.parquet` | 3,475,226 in → 3,475,080 published, 146 quarantined (124 drop-off < pickup, 22 outside month), 0 duplicates |
+| Pipeline time | host 33.4 s (Spark 30.4 s); container 44.8 s incl. 7.8 s download |
+| Staging verification | ClickHouse row count and `sum(total_amount)` equal Spark's exactly (decimal) before and after `REPLACE PARTITION` |
+| Idempotency | 3 runs of the same month → one run_id in ClickHouse, 3,475,080 rows; job attempts 1 (failed, recorded), 2, 3 |
+| API vs independent SQL | JFK card pickups 6–12 Jan: 24,462 trips, $2,172,447.18, 16.7859 mi — identical |
+| Timestamps | min/max pickup `2025-01-01 00:00:00` / `2025-01-31 23:59:59`: wall-clock preserved, no shift |
+| Security checks | reader cannot write/DDL/`url()`/`s3()`/raise limits; lake ClickHouse identity cannot write; forged `alg=none` cookie → 401; viewer → 403 on jobs; unknown params → 422 |
+| Lint / types | ruff, ruff format, mypy `--strict` (41 files), tsc strict, eslint: clean |
+
+**Deviations from the spec's suggestions (with reasons)**
+- *SeaweedFS instead of MinIO:* MinIO images are no longer pullable from Docker Hub or quay.io. SeaweedFS is S3-compatible, and all code uses the generic S3 API.
+- *Spark writes locally, then the pipeline publishes to the lake* (ADR-02): avoids ~600 MB of S3A jars. ClickHouse still reads curated data from the lake.
+- *Host Spark needs a full JDK 17+:* the machine's default `JAVA_HOME` (Android Studio JBR) lacks `jdk.incubator.vector`. `SPARK_JAVA_HOME` plus a preflight check handle this, and the container uses OpenJDK 21.
+- *CI workflow not added yet:* the GitHub token in use lacks the `workflow` scope needed to push `.github/workflows/`.
+
+**Known limitations carried forward**
+- Ingestion is CLI-triggered. API-triggered jobs with retry/cancel and a worker arrive in Phase 2.
+- Only the date filter is exposed in the UI; the API already validates the zone, payment, vendor, hour and distance filters.
+- The login throttle is per process; sessions are stateless JWTs (revocation planned for Phase 6).
+- The API image carries pyarrow and boto3, which only the pipeline needs (~700 MB image); slimming is planned.
 
 ### Phase 2 — Complete batch pipeline
 - ☐ Multiple files/periods (3–6 months contiguous), schema-version registry + drift report across files
