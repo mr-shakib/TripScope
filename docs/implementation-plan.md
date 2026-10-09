@@ -1,6 +1,6 @@
 # TripScope — Implementation Plan
 
-Status: living document. Updated at the end of every phase. **Phases 1–2 complete; next: Phase 3.**
+Status: living document. Updated at the end of every phase. **Phases 1–2 complete; Phase 3 in progress.**
 Spec: [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) (section references below use `§`).
 
 ---
@@ -262,9 +262,17 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - The login throttle is per process; sessions are stateless JWTs (revocation in Phase 6).
 - The API image still carries pyarrow and boto3, which only the pipeline needs.
 
-### Phase 3 — Dashboard and explorer
-- ☐ All FR-07 KPIs/charts, all filters, URL-synced filter state, drill-down by click, metric definitions panel
-- ☐ Data explorer (schema, quality, bounded preview, sorting, filtered extract); Data Quality and Processing Jobs pages
+### Phase 3 — Dashboards, zone map and data explorer — **in progress**
+- ☐ Every FR-07 KPI: add trips per day; period-over-period comparison when a date range is selected
+- ☐ Every FR-07 chart: trip-distance and total-amount distributions (outliers capped and disclosed), payment types, top drop-off zones, pickup→drop-off flows, hour × weekday heatmap
+- ☐ Every FR-07 filter in the UI: drop-off zone, vendor, trip-distance range, vehicle type (single published type shown, not hidden)
+- ☐ Click-to-filter on every chart where meaningful (payment slice, distance bucket, heatmap cell, zone, flow)
+- ☐ Taxi-zone choropleth from the official TLC shapefile (reprojected EPSG:2263 → WGS84, simplified, stored in the lake); click a zone to filter
+- ☐ Source routing generalised: each table declares the filters, dimensions and metrics it can answer; the first that covers a request wins
+- ☐ Metric-definitions panel available from every analytics page
+- ☐ Data explorer (FR-08): field catalogue with types, descriptions and availability; bounded, paginated, sortable row preview with quality filters; applied filters and row count; CSV extract with row limit, formula-injection protection and audit
+- ☐ Tests: backend unit + integration for every new query path (aggregate vs raw equality), export safety; Vitest; Playwright for dashboards, map and explorer
+- ☐ Docs updated; PR merged
 
 ### Phase 4 — Exports and report center
 - ☐ CSV/XLSX (formula-injection safe, frozen panes, formats)/PDF; templates 1–5; async status; authorized downloads; report history
