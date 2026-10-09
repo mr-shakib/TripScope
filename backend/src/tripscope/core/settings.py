@@ -16,6 +16,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PLACEHOLDER_SECRET = "replace-me"  # noqa: S105 - the placeholder we refuse, not a credential
 
 
+def find_repo_root(start: Path | None = None) -> Path | None:
+    """The checkout root (holds compose.yaml and manifests/), searched upward from `start` or the CWD."""
+    origin = (start or Path.cwd()).resolve()
+    for candidate in (origin, *origin.parents):
+        if (candidate / "compose.yaml").is_file() and (candidate / "manifests").is_dir():
+            return candidate
+    return None
+
+
 def _env_files() -> tuple[Path, ...]:
     """`.env` at the repository root, whether we run from the repo root or from `backend/`."""
     cwd = Path.cwd()
@@ -55,6 +64,15 @@ class Settings(BaseSettings):
     spark_driver_memory: str = "4g"
     spark_master: str = "local[*]"
     spark_java_home: Path | None = None  # full JDK 17+; defaults to the JVM on PATH / JAVA_HOME
+
+    @field_validator("pipeline_work_dir")
+    @classmethod
+    def _absolute_work_dir(cls, value: Path) -> Path:
+        """Relative paths are relative to the checkout root, so host runs work from any directory."""
+        if value.is_absolute():
+            return value
+        root = find_repo_root()
+        return (root / value).resolve() if root else value.resolve()
 
     @field_validator("spark_java_home", mode="before")
     @classmethod
