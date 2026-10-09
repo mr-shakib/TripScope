@@ -1,6 +1,6 @@
 # Security
 
-Scope: Phase 1. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
+Scope: Phases 1–2. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
 
 ## Authentication and sessions
 
@@ -22,8 +22,12 @@ Scope: Phase 1. Items marked *planned* are tracked in the [implementation plan](
 
 | Endpoint group | admin | analyst | viewer |
 |---|---|---|---|
-| `/analytics/*`, `/datasets` | ✓ | ✓ | ✓ |
-| `/ingestion-jobs` | ✓ | ✓ | ✗ (403) |
+| `/analytics/*`, `/datasets/*` (incl. schema, quality) | ✓ | ✓ | ✓ |
+| `GET /ingestion-jobs`, `/processing-runs/*/logs`, `/data-sources` | ✓ | ✓ | ✗ (403) |
+| `POST /ingestion-jobs`, `…/retry`, `…/cancel` | ✓ | ✗ (403) | ✗ (403) |
+
+Job actions are audited (`job.queued`, `job.retried`, `job.cancel_requested`). The web UI hides actions a role
+cannot take, but the API is the enforcement point.
 
 Checks run in backend dependencies, never only in the UI. In Phase 1 every role can read every published
 dataset; per-dataset grants are planned for Phase 6.
@@ -54,9 +58,18 @@ text. The API container gets only the reader credentials and the app's lake iden
 The writer and ClickHouse admin credentials are never given to it. Integration tests verify the reader and
 lake-identity restrictions.
 
+## Jobs and logs
+
+Only manifest source keys (validated pattern) can be queued; the API never accepts URLs or paths from clients.
+A partial unique index allows one queued-or-running job per source, so concurrent requests cannot start duplicate
+runs (409). Run logs keep only the run's own TripScope records, pass through `redact()`, and are capped at 500
+entries; they are visible to admins and analysts.
+
 ## Untrusted input files
 
-Source files are treated as data only. They come from HTTPS hosts on the manifest allowlist, or from local
+CSV sources are checked line by line before Spark: a missing or duplicate header, a row with the wrong number
+of fields, invalid UTF-8, or a trailing server-error body (a truncated export) rejects the file. Source files are
+treated as data only. They come from HTTPS hosts on the manifest allowlist, or from local
 paths confined to the repository directory, and are size-capped and checksum-verified. Their Parquet
 structure is validated, and only pyarrow/Spark readers touch them. Nothing in a file is executed or
 interpreted as an instruction. Raw objects are write-once: a different checksum for an existing key fails the
@@ -72,8 +85,10 @@ run instead of overwriting the file.
 
 ## HTTP hardening
 
-Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy:
-no-referrer` and a request ID. API responses also carry `Cache-Control: no-store`. nginx adds a strict
-Content-Security-Policy (`default-src 'self'`, no inline scripts, `frame-ancestors 'none'`). The frontend
-never uses `dangerouslySetInnerHTML` (lint rule), and chart tooltip text is HTML-escaped. OpenAPI docs are
+API responses carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+`Cache-Control: no-store` and a request ID. The Next.js server adds the same headers plus a per-request
+**nonce-based Content-Security-Policy** from `proxy.ts` (`script-src 'self' 'nonce-…' 'strict-dynamic'`, no
+`unsafe-eval` in production, `frame-ancestors 'none'`, `connect-src 'self'`); inline style attributes are allowed
+for chart rendering. The post-login redirect only accepts same-site relative paths (no open redirect). The
+frontend never uses `dangerouslySetInnerHTML` (lint rule) and chart tooltip text is HTML-escaped. OpenAPI docs are
 disabled when `APP_ENV=production`. All service ports bind to loopback.

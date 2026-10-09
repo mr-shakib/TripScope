@@ -4,7 +4,7 @@ SOURCE ?= yellow-2025-01
 BACKEND := cd backend &&
 FRONTEND := cd frontend &&
 
-.PHONY: help env up down reset migrate pipeline pipeline-docker user api web app \
+.PHONY: help env up down reset migrate pipeline pipeline-docker aggregates user api worker web app \
         test test-unit test-integration test-frontend e2e lint format
 
 help: ## Show available targets
@@ -30,6 +30,9 @@ migrate: ## Apply PostgreSQL (Alembic) and ClickHouse migrations from the host
 pipeline: ## Run one manifest source end to end on the host (SOURCE=yellow-2025-01)
 	$(BACKEND) uv run tripscope-pipeline run --source $(SOURCE)
 
+aggregates: ## Rebuild pre-aggregates for every published month (no Spark needed)
+	$(BACKEND) uv run tripscope-pipeline build-aggregates
+
 pipeline-docker: ## Run one manifest source in the Spark container (SOURCE=yellow-2025-01)
 	docker compose --profile pipeline run --rm pipeline run --source $(SOURCE)
 
@@ -39,10 +42,13 @@ user: ## Create a user interactively: make user EMAIL=a@b.org NAME="Ana" ROLE=an
 api: ## Run the API with auto-reload on http://127.0.0.1:8000
 	$(BACKEND) uv run uvicorn tripscope.api.app:create_app --factory --reload --host 127.0.0.1 --port 8000
 
-web: ## Run the frontend dev server on http://127.0.0.1:5173 (proxies /api to :8000)
+worker: ## Process jobs queued from the UI/API on the host (Ctrl+C finishes the current job)
+	$(BACKEND) uv run tripscope-pipeline worker
+
+web: ## Run the Next.js dev server on http://127.0.0.1:3000 (rewrites /api to :8000)
 	$(FRONTEND) npm run dev
 
-app: ## Build and start API + web containers on http://127.0.0.1:8080
+app: ## Build and start API, worker and web containers on http://127.0.0.1:8080
 	docker compose --profile app up -d --build --wait
 
 test: test-unit test-integration test-frontend ## Run all automated tests except e2e
@@ -56,7 +62,7 @@ test-integration: ## Backend integration tests (needs `make up`; uses isolated *
 test-frontend: ## Frontend type check, lint and unit tests
 	$(FRONTEND) npm run typecheck && npm run lint && npm test
 
-e2e: ## Browser test against a running API (E2E_EMAIL/E2E_PASSWORD; optional E2E_BASE_URL)
+e2e: ## Browser tests against a running stack (E2E_ADMIN_EMAIL/PASSWORD, optional E2E_VIEWER_*, E2E_BASE_URL)
 	$(FRONTEND) npx playwright test
 
 lint: ## Static checks for backend and frontend

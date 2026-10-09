@@ -1,6 +1,6 @@
 # TripScope — Implementation Plan
 
-Status: living document. Updated at the end of every phase. **Phase 1 complete; Phase 2 in progress.**
+Status: living document. Updated at the end of every phase. **Phases 1–2 complete; next: Phase 3.**
 Spec: [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) (section references below use `§`).
 
 ---
@@ -128,7 +128,7 @@ compose.yaml, Makefile, .env.example, README.md
 Backend (Python 3.12): pyspark 4.2.0, pyarrow 26, fastapi 0.143, uvicorn 0.54, pydantic 2.14, pydantic-settings 2.15,
 sqlalchemy 2.1, alembic 1.20, psycopg 3.3, clickhouse-connect 1.10, boto3, httpx, pyjwt 2.15, argon2-cffi, pyyaml;
 dev: pytest 9, ruff, mypy.
-Frontend: vite 8, react 19.3, typescript, tailwindcss 4.3, echarts 6.1, @tanstack/react-query 5, react-router 7, vitest, Playwright.
+Frontend (Phase 2+): next 16.4, react 19.3, typescript 5.9, tailwindcss 4.3, radix-ui 1.7, echarts 6.1, @tanstack/react-query 5, sonner, lucide-react, vitest, Playwright.
 Services: postgres:16-alpine, clickhouse/clickhouse-server:25.8, minio/minio:RELEASE.2025-09-07T16-13-09Z
 (the MinIO community image is pinned to a published release; S3-compatible alternatives are possible because the code uses the generic S3 API).
 
@@ -225,17 +225,42 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - The login throttle is per process; sessions are stateless JWTs (revocation planned for Phase 6).
 - The API image carries pyarrow and boto3, which only the pipeline needs (~700 MB image); slimming is planned.
 
-### Phase 2 — Complete batch pipeline + operations UI (Next.js) — **in progress**
-- ☐ Six contiguous months (2025-01 → 2025-06) in the manifest with pinned checksums; all published
-- ☐ CSV sources (NYC Open Data export format): strict structural validation, explicit timestamp format, truncated exports rejected
-- ☐ Schema registry and drift report across files (`GET /datasets/{id}/schema`)
-- ☐ API-triggered jobs: create / list / get / retry / cancel, run logs endpoint, audit events; PostgreSQL queue + worker container with heartbeat and cancellation
-- ☐ Pre-aggregates (`trips_hourly_agg`, `trips_dropoff_daily_agg`, `fare_distance_buckets`, `data_quality_daily`) built per partition; query routing with raw-vs-aggregate equality tests; `build-aggregates` command
-- ☐ Quality API (`GET /datasets/{id}/quality`): per-period metrics, quarantine reasons, flags, missingness, daily flag trends
-- ☐ Analytics additions served from aggregates: trips by hour, by weekday, top pickup zones (zone names from the TLC lookup)
-- ☐ Next.js frontend (light theme): Overview with global filters (date range, pickup zone, payment type, hours), KPI cards with sparklines, zoomable time series with click-to-drill, hour/weekday/zone charts with click-to-filter; Data Sources (queue runs); Processing Jobs (live status, stage timeline, logs, retry/cancel); Data Quality (quarantine, flags, missingness, schema drift)
-- ☐ Tests: backend unit + integration for every new path; Vitest; Playwright e2e for the new pages
-- ☐ Docs updated; PR merged
+### Phase 2 — Complete batch pipeline + operations UI (Next.js) — **complete (2026-10-10)**
+- ☑ Six contiguous months (2025-01 → 2025-06) in the manifest with pinned checksums; all published
+- ☑ CSV sources (NYC Open Data export format): strict structural validation, explicit timestamp format, truncated exports rejected
+- ☑ Schema registry and drift report across files (`GET /datasets/{id}/schema`)
+- ☑ API-triggered jobs: create / list / get / retry / cancel, run logs endpoint, audit events; PostgreSQL queue + worker container with heartbeat and cancellation
+- ☑ Pre-aggregates (`trips_hourly_agg`, `trips_dropoff_daily_agg`, `fare_distance_buckets`, `data_quality_daily`) built per partition; query routing with raw-vs-aggregate equality tests; `build-aggregates` command
+- ☑ Quality API (`GET /datasets/{id}/quality`): per-period metrics, quarantine reasons, flags, missingness, daily flag trends
+- ☑ Analytics additions served from aggregates: trips by hour, by weekday, top pickup zones (zone names from the TLC lookup), weekday filter
+- ☑ Next.js frontend (light theme): Overview with global filters and click-to-filter charts; Data sources; Processing jobs; Data quality
+- ☑ Tests: 75 backend unit, 26 integration, 12 Vitest, 6 Playwright e2e (dev server and container build)
+- ☑ Docs updated (README, architecture, API reference, security, metric definitions); PR merged
+
+**Verification record (Phase 2)**
+
+| Check | Result |
+|---|---|
+| Six months published | 24,083,384 rows read → 24,082,454 published, 930 quarantined (793 drop-off < pickup, 137 outside month); one schema version, no drift |
+| Real truncated CSV in this workspace | Rejected in 2.3 s: "line 1823572: the export ends with a server response instead of data … after 1,823,570 rows" |
+| Queue → worker | API-queued job claimed by the worker, live stage visible, completed; duplicate request → 409 |
+| Cancel mid-Spark | Cancelled 1.1 s after the request; summary "nothing was published"; ClickHouse run_id and row count unchanged; retry linked as attempt 3 |
+| Container worker | Real 2025-04 run in Docker (OpenJDK 21): 3,970,553 → 3,970,383, identical to the host run |
+| Aggregates | Backfill of 6 months in 5.8 s, each verified exactly; overview 178 → 36 ms, daily series 29 → 12 ms, top zones 65 → 17 ms (24.1M → 2.2M rows read) |
+| Raw vs aggregate equality tests | Caught and fixed two discrepancies before release: decimal-scale truncation of the average amount; aggregate total 0 where the fact table reports no data |
+| UI ↔ API | Playwright: hero KPI equals the API after every filter interaction (weekday bar click, zone search, hour picker, chip removal, reset, month preset); table sum equals the KPI |
+| Security | Admin-only job mutations; viewer 403 on sources/jobs; nonce CSP without `unsafe-eval` in production; no open redirect after login |
+
+**Deviations and decisions**
+- Frontend rebuilt in Next.js 16 at the user's request (ADR-14); light theme only for now.
+- Job start/retry/cancel are admin-only, following spec §3.1; analysts can view jobs, sources and logs.
+- The NYC Open Data CSV export in this workspace is truncated, so CSV ingestion is demonstrated with a fixture in the same format; the real file is used to prove rejection.
+
+**Known limitations carried forward**
+- File upload through the UI (FR-02 "uploaded file") is not built yet; sources come from the manifest.
+- Drop-off zone and distance-range filters exist in the API but not yet in the UI (Phase 3), and they read the fact table.
+- The login throttle is per process; sessions are stateless JWTs (revocation in Phase 6).
+- The API image still carries pyarrow and boto3, which only the pipeline needs.
 
 ### Phase 3 — Dashboard and explorer
 - ☐ All FR-07 KPIs/charts, all filters, URL-synced filter state, drill-down by click, metric definitions panel

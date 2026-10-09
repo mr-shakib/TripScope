@@ -62,3 +62,14 @@ Monetary values are rounded to cents (`Decimal(14,2)`) so totals reconcile exact
 
 `taxi_zones` (ClickHouse) holds TLC's `taxi_zone_lookup.csv`: 265 IDs, of which 263 are geographic.
 ID 264 (`Unknown`) and 265 (`Outside of NYC`) are kept but marked `is_geographic = false`.
+
+## Pre-aggregates (ClickHouse)
+
+Built per month from the verified staging rows of each run and swapped together with `taxi_trips`.
+
+| Table | Grain | Measures |
+|---|---|---|
+| `trips_hourly_agg` | date × hour × weekday × pickup zone × payment type × vendor | trips; count and sum of valid total amount, distance and duration |
+| `trips_dropoff_daily_agg` | date × drop-off zone × payment type × vendor | trips; count and sum of valid total amount and distance |
+| `fare_distance_buckets` | date × metric × bucket (1 mile up to 50+, $5 up to $200+) | trips with a valid value in the bucket |
+| `data_quality_daily` | date × flag | accepted trips carrying the flag |
