@@ -30,6 +30,11 @@ class PermissionDeniedError(TripScopeError):
     code = "forbidden"
 
 
+class ConflictError(TripScopeError):
+    status_code = 409
+    code = "conflict"
+
+
 class ValidationFailedError(TripScopeError):
     status_code = 422
     code = "validation_failed"

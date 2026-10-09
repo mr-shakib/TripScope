@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -19,6 +20,7 @@ from clickhouse_connect.driver.client import Client
 
 from tripscope.core.errors import PipelineError
 from tripscope.core.identifiers import validate_identifier
+from tripscope.pipeline.aggregates import build_aggregate_stages, drop_stages, swap_aggregates
 from tripscope.pipeline.spark_transform import CURATED_COLUMNS
 from tripscope.pipeline.zones import Zone
 
@@ -70,6 +72,7 @@ def load_partition(
     run_id: str,
     expected_rows: int,
     expected_amount_sum: Decimal,
+    before_publish: Callable[[], None] | None = None,
 ) -> LoadVerification:
     """Stage curated Parquet from the lake, verify it against Spark's metrics, then atomically replace
     the target partition. Nothing is visible unless every check passes; re-runs replace, never append."""
@@ -103,20 +106,27 @@ def load_partition(
             raise PipelineError("staging verification query returned no row")
         rows, amount, min_date, max_date, wrong_type, wrong_period = staged
         amount = Decimal(amount or 0)
-        problems = []
-        if rows != expected_rows:
-            problems.append(f"row count {rows} != Spark accepted rows {expected_rows}")
-        if amount != expected_amount_sum:
-            problems.append(f"sum(total_amount) {amount} != Spark {expected_amount_sum}")
-        if wrong_type or wrong_period:
-            problems.append(f"{wrong_type} rows with another taxi type, {wrong_period} outside the period")
-        if problems:
-            raise PipelineError("staging verification failed: " + "; ".join(problems))
+        _check_staged(rows, amount, wrong_type, wrong_period, expected_rows, expected_amount_sum)
 
-        client.command(
-            f"ALTER TABLE {db}.taxi_trips REPLACE PARTITION tuple('{taxi_type}', {_yyyymm(period)}) "
-            f"FROM {db}.{stage}"
+        # Aggregates come from the same verified staging rows, so they always match the published month.
+        agg_stages = build_aggregate_stages(
+            client,
+            database=db,
+            source_table=stage,
+            taxi_type=taxi_type,
+            period=period,
+            tag=uuid.UUID(run_id).hex,
         )
+        try:
+            if before_publish is not None:
+                before_publish()  # last point at which a cancel request stops the run with nothing replaced
+            client.command(
+                f"ALTER TABLE {db}.taxi_trips REPLACE PARTITION tuple('{taxi_type}', {_yyyymm(period)}) "
+                f"FROM {db}.{stage}"
+            )
+            swap_aggregates(client, database=db, stages=agg_stages, taxi_type=taxi_type, period=period)
+        finally:
+            drop_stages(client, database=db, stages=agg_stages)
         target = client.query(
             f"SELECT count(), sum(total_amount) FROM {db}.taxi_trips "
             "WHERE taxi_type = {taxi_type:String} AND toYYYYMM(pickup_date) = {yyyymm:UInt32}",
@@ -132,6 +142,25 @@ def load_partition(
     finally:
         client.command(f"DROP TABLE IF EXISTS {db}.{stage}")
     return LoadVerification(rows, published, amount, min_date, max_date)
+
+
+def _check_staged(
+    rows: int,
+    amount: Decimal,
+    wrong_type: int,
+    wrong_period: int,
+    expected_rows: int,
+    expected_amount: Decimal,
+) -> None:
+    problems = []
+    if rows != expected_rows:
+        problems.append(f"row count {rows} != Spark accepted rows {expected_rows}")
+    if amount != expected_amount:
+        problems.append(f"sum(total_amount) {amount} != Spark {expected_amount}")
+    if wrong_type or wrong_period:
+        problems.append(f"{wrong_type} rows with another taxi type, {wrong_period} outside the period")
+    if problems:
+        raise PipelineError("staging verification failed: " + "; ".join(problems))
 
 
 def load_zones(client: Client, *, database: str, zones: list[Zone], source_sha256: str) -> int:
