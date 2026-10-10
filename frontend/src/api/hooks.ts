@@ -2,12 +2,20 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { toApiParams } from "@/lib/filters";
+import { toApiBody, toApiParams } from "@/lib/filters";
 
 import { ApiError, apiFetch, toQueryString } from "./client";
 import type {
   BreakdownResponse,
   Coverage,
+  DistributionResponse,
+  ExplorerField,
+  ExplorerRowsResponse,
+  FlowsResponse,
+  MatrixResponse,
+  MetricDefinition,
+  QualityScope,
+  ZoneFeatureCollection,
   DashboardFilters,
   DataSourceItem,
   Granularity,
@@ -73,21 +81,120 @@ function analyticsQuery<T>(path: string, filters: DashboardFilters, extra: Recor
   };
 }
 
-export function useOverview(filters: DashboardFilters) {
-  return useQuery(analyticsQuery<OverviewResponse>("overview", filters));
+export function useOverview(filters: DashboardFilters, compare = false) {
+  return useQuery(analyticsQuery<OverviewResponse>("overview", filters, { compare: compare ? "previous" : undefined }));
 }
 
 export function useTimeSeries(filters: DashboardFilters, metric: MetricId, granularity: Granularity) {
   return useQuery(analyticsQuery<TimeSeriesResponse>("trips-over-time", filters, { metric, granularity }));
 }
 
-export function useBreakdown(
-  path: "trips-by-hour" | "trips-by-weekday" | "top-pickup-zones",
-  filters: DashboardFilters,
-  metric: MetricId,
-  limit?: number,
-) {
+export type BreakdownPath =
+  | "trips-by-hour"
+  | "trips-by-weekday"
+  | "top-pickup-zones"
+  | "top-dropoff-zones"
+  | "payment-types"
+  | "vendors";
+
+export function useBreakdown(path: BreakdownPath, filters: DashboardFilters, metric: MetricId, limit?: number) {
   return useQuery(analyticsQuery<BreakdownResponse>(path, filters, { metric, limit }));
+}
+
+export function useZoneTotals(filters: DashboardFilters, side: "pickup" | "dropoff", metric: MetricId) {
+  return useQuery(analyticsQuery<BreakdownResponse>("zone-totals", filters, { side, metric, limit: 300 }));
+}
+
+export function useMatrix(filters: DashboardFilters, metric: MetricId) {
+  return useQuery(analyticsQuery<MatrixResponse>("hour-weekday", filters, { metric }));
+}
+
+export function useFlows(filters: DashboardFilters, limit = 12) {
+  return useQuery(analyticsQuery<FlowsResponse>("top-flows", filters, { limit }));
+}
+
+export function useDistribution(filters: DashboardFilters, metric: "trip_distance" | "total_amount") {
+  return useQuery(analyticsQuery<DistributionResponse>("distribution", filters, { metric }));
+}
+
+export function useZoneGeometry() {
+  return useQuery({
+    queryKey: ["zone-geometry"],
+    queryFn: () => apiFetch<ZoneFeatureCollection>("/analytics/zones/geometry"),
+    staleTime: Infinity,
+    retry: noRetryOnAuth,
+  });
+}
+
+export function useMetricCatalogue() {
+  return useQuery({
+    queryKey: ["metric-catalogue"],
+    queryFn: () => apiFetch<{ metrics: MetricDefinition[] }>("/analytics/metrics").then((r) => r.metrics),
+    staleTime: Infinity,
+  });
+}
+
+export interface RowScope {
+  sort: string;
+  order: "asc" | "desc";
+  quality: QualityScope;
+  flag?: string;
+}
+
+export function useExplorerRows(filters: DashboardFilters, scope: RowScope, page: number, pageSize: number) {
+  return useQuery({
+    queryKey: ["explorer", filters, scope, page, pageSize],
+    queryFn: () =>
+      apiFetch<ExplorerRowsResponse>(
+        `/explorer/rows${toQueryString({ dataset_id: DATASET_ID, ...toApiParams(filters), ...scope, page, page_size: pageSize })}`,
+      ),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnAuth,
+  });
+}
+
+export function useExplorerFields() {
+  return useQuery({
+    queryKey: ["explorer-fields"],
+    queryFn: () =>
+      apiFetch<{ fields: ExplorerField[]; sortable: string[]; periods: string[]; max_export_rows: number }>("/explorer/fields"),
+    staleTime: 60_000,
+  });
+}
+
+export interface ExtractResult {
+  blob: Blob;
+  fileName: string;
+  totalRows: number;
+  exportedRows: number;
+  truncated: boolean;
+}
+
+/** POST /exports and return the CSV as a Blob (the browser then saves it). */
+export async function downloadExtract(filters: DashboardFilters, scope: RowScope, columns?: string[]): Promise<ExtractResult> {
+  const response = await fetch("/api/v1/exports", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      format: "csv",
+      filters: { dataset_id: DATASET_ID, ...toApiBody(filters) },
+      scope: { sort: scope.sort, order: scope.order, quality: scope.quality, ...(scope.flag ? { flag: scope.flag } : {}) },
+      ...(columns ? { columns } : {}),
+    }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string; request_id?: string } } | null;
+    throw new ApiError(response.status, body?.error?.code ?? "http_error", body?.error?.message ?? "Export failed", body?.error?.request_id ?? null);
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  return {
+    blob: await response.blob(),
+    fileName: /filename="([^"]+)"/.exec(disposition)?.[1] ?? "tripscope-trips.csv",
+    totalRows: Number(response.headers.get("x-total-rows") ?? 0),
+    exportedRows: Number(response.headers.get("x-exported-rows") ?? 0),
+    truncated: response.headers.get("x-truncated") === "true",
+  };
 }
 
 export function useZones() {

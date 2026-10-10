@@ -26,15 +26,29 @@ const coverage: Coverage = {
 
 describe("filters in the URL", () => {
   it("round-trip every dimension", () => {
-    const filters = { start_date: "2025-01-06", end_date: "2025-01-12", pickup_zone: [132, 161], payment_type: [0, 1], hour: [7, 8], weekday: [6, 7] };
+    const filters = {
+      start_date: "2025-01-06",
+      end_date: "2025-01-12",
+      pickup_zone: [132, 161],
+      dropoff_zone: [236],
+      payment_type: [0, 1],
+      vendor_id: [2],
+      hour: [7, 8],
+      weekday: [6, 7],
+      min_distance: 1,
+      max_distance: 3.5,
+    };
     const params = writeFilters(new URLSearchParams("tab=x"), filters);
-    expect(params.toString()).toBe("tab=x&start=2025-01-06&end=2025-01-12&pz=132%2C161&pt=0%2C1&h=7%2C8&wd=6%2C7");
+    expect(params.toString()).toBe(
+      "tab=x&start=2025-01-06&end=2025-01-12&pz=132%2C161&dz=236&pt=0%2C1&v=2&h=7%2C8&wd=6%2C7&dmin=1&dmax=3.5",
+    );
     expect(readFilters(params)).toEqual(filters);
   });
 
   it("drop malformed and out-of-range values instead of sending them", () => {
-    const params = new URLSearchParams("start=2025-01-06';DROP&pz=0,132,999,x,132&h=24,23&wd=8&pt=-1,2");
+    const params = new URLSearchParams("start=2025-01-06';DROP&pz=0,132,999,x,132&h=24,23&wd=8&pt=-1,2&dmin=-4&dmax=abc");
     expect(readFilters(params)).toEqual({ ...EMPTY_FILTERS, pickup_zone: [132], hour: [23], payment_type: [2] });
+    expect(readFilters(new URLSearchParams("dmin=5&dmax=2"))).toEqual({ ...EMPTY_FILTERS, min_distance: 5 });
   });
 
   it("clear keys when filters reset", () => {

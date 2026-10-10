@@ -145,19 +145,30 @@ const ZONE_METRICS: { value: MetricId; label: string }[] = [
   { value: "total_recorded_amount", label: "Amount" },
 ];
 
-export function TopZonesCard({ filters, onFiltersChange }: { filters: DashboardFilters; onFiltersChange: (f: DashboardFilters) => void }) {
+export function TopZonesCard({
+  filters,
+  onFiltersChange,
+  side = "pickup",
+  limit = 12,
+}: {
+  filters: DashboardFilters;
+  onFiltersChange: (f: DashboardFilters) => void;
+  side?: "pickup" | "dropoff";
+  limit?: number;
+}) {
   const [metric, setMetric] = useState<MetricId>("total_trips");
-  const query = useBreakdown("top-pickup-zones", filters, metric, 12);
+  const query = useBreakdown(side === "pickup" ? "top-pickup-zones" : "top-dropoff-zones", filters, metric, limit);
+  const field = side === "pickup" ? "pickup_zone" : "dropoff_zone";
   const groups = query.data?.groups ?? [];
   const total = groups.reduce((sum, g) => sum + (g.value ?? 0), 0);
   return (
     <Card>
       <CardHeader
-        title="Top pickup zones"
-        description="Ranked by the selected metric. Click a zone to filter the whole dashboard."
+        title={side === "pickup" ? "Top pickup zones" : "Top drop-off zones"}
+        description="Ranked by the selected metric. Click a zone to filter the whole view."
         actions={<Segmented label="Rank by" value={metric} onChange={setMetric} options={ZONE_METRICS} />}
       />
-      <div className={`px-3 pb-4 pt-2 transition-opacity sm:px-4 ${query.isPlaceholderData ? "opacity-50" : ""}`}>
+      <div className={`px-3 pb-4 pt-2 transition-opacity sm:px-4 ${query.isPlaceholderData ? "opacity-50" : ""}`} data-testid={`top-${side}-zones`}>
         {query.isPending ? (
           <LoadingBlock className="h-72" />
         ) : query.isError ? (
@@ -166,7 +177,7 @@ export function TopZonesCard({ filters, onFiltersChange }: { filters: DashboardF
           <EmptyBlock title="No trips" className="h-72" />
         ) : (
           <BarList
-            ariaLabel="Top pickup zones"
+            ariaLabel={side === "pickup" ? "Top pickup zones" : "Top drop-off zones"}
             items={groups.map((g) => ({
               key: g.key ?? -1,
               label: g.label,
@@ -176,12 +187,13 @@ export function TopZonesCard({ filters, onFiltersChange }: { filters: DashboardF
               share: formatPercent(g.value, total),
               muted: !g.mapped,
             }))}
-            selected={filters.pickup_zone}
-            onSelect={(key) => onFiltersChange(toggleValue(filters, "pickup_zone", Number(key)))}
+            selected={filters[field]}
+            onSelect={(key) => onFiltersChange(toggleValue(filters, field, Number(key)))}
           />
         )}
         <p className="mt-3 flex items-center gap-1.5 text-[11px] text-ink-muted">
           <MapPin className="size-3.5" /> Shares are of the zones shown. IDs 264/265 are TLC’s “Unknown” and “Outside of NYC”, kept but not mapped.
+          {query.data?.meta.source_table ? <span className="ml-auto font-mono">{query.data.meta.source_table}</span> : null}
         </p>
       </div>
     </Card>

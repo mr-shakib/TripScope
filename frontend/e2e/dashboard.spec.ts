@@ -1,49 +1,13 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
+
+import { admin, apiOverview, expectTripsMatchApi, guardPageErrors, signIn, viewer } from "./helpers";
 
 /*
  * End-to-end against the real stack (API + published data + a running worker for the jobs test).
  * Accounts come from the environment: E2E_ADMIN_EMAIL/PASSWORD (required) and E2E_VIEWER_EMAIL/PASSWORD (optional).
  */
-const admin = { email: process.env.E2E_ADMIN_EMAIL ?? "", password: process.env.E2E_ADMIN_PASSWORD ?? "" };
-const viewer = { email: process.env.E2E_VIEWER_EMAIL ?? "", password: process.env.E2E_VIEWER_PASSWORD ?? "" };
-
 test.skip(!admin.email || !admin.password, "set E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD");
-
-interface Overview {
-  kpis: Record<string, { value: number | null }>;
-  meta: { source_table: string };
-}
-
-async function signIn(page: Page, account: { email: string; password: string }, next = "/") {
-  await page.goto(next);
-  await expect(page).toHaveURL(/\/login/);
-  await page.getByLabel("Email").fill(account.email);
-  await page.getByLabel("Password").fill(account.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login/);
-}
-
-async function apiOverview(page: Page, query = ""): Promise<Overview> {
-  const response = await page.request.get(`/api/v1/analytics/overview${query}`);
-  expect(response.ok()).toBeTruthy();
-  return (await response.json()) as Overview;
-}
-
-/** The hero KPI shows the exact API value for the filters currently in the URL. */
-async function expectTripsMatchApi(page: Page) {
-  const params = new URL(page.url()).searchParams;
-  const query = new URLSearchParams();
-  const map: Record<string, string> = { start: "start_date", end: "end_date", pz: "pickup_zone", pt: "payment_type", h: "hour", wd: "weekday" };
-  for (const [short, long] of Object.entries(map)) {
-    const value = params.get(short);
-    if (!value) continue;
-    if (short === "start" || short === "end") query.append(long, value);
-    else value.split(",").forEach((v) => query.append(long, v));
-  }
-  const expected = await apiOverview(page, `?${query.toString()}`);
-  await expect(page.getByTestId("kpi-total_trips")).toHaveAttribute("data-value", String(expected.kpis.total_trips?.value));
-  return expected;
-}
+guardPageErrors();
 
 /** ECharts SVG bars in series colour, ordered left to right. */
 async function bars(chart: Locator): Promise<Locator[]> {
@@ -72,11 +36,14 @@ test("overview KPIs, charts and filters agree with the API", async ({ page }) =>
   expect(all.meta.source_table).toBe("trips_hourly_agg");
   await expect(page.getByTestId("trend-chart").locator("svg")).toBeVisible();
 
-  // Click Saturday in the weekday chart → filter applied, every KPI follows.
+  // Click Saturday in the weekday chart (Dashboards) → filter applied; back on Overview every KPI follows.
+  await page.goto("/dashboards");
   const weekdayBars = await bars(page.getByTestId("weekday-chart"));
   expect(weekdayBars).toHaveLength(7);
   await weekdayBars[5]!.click();
   await expect(page).toHaveURL(/wd=6/);
+  await page.getByRole("link", { name: "Overview" }).click();
+  await expect(page).toHaveURL(/\/\?wd=6/);
   const saturday = await expectTripsMatchApi(page);
   expect(saturday.kpis.total_trips!.value!).toBeLessThan(all.kpis.total_trips!.value!);
   await expect(page.getByTestId("active-filters")).toContainText("Sat");
@@ -88,7 +55,7 @@ test("overview KPIs, charts and filters agree with the API", async ({ page }) =>
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(/pz=132/);
   await expectTripsMatchApi(page);
-  await expect(page.getByTestId("active-filters")).toContainText("JFK Airport");
+  await expect(page.getByTestId("active-filters")).toContainText("From JFK Airport");
 
   // Add morning-peak hours from the time picker.
   await page.getByTestId("filter-time").click();
@@ -145,7 +112,7 @@ test("admin queues a run and cancels it from the job drawer", async ({ page }) =
   await expect(drawer.getByRole("button", { name: "Retry" })).toBeVisible();
 
   // Published data for June is unchanged.
-  const june = await apiOverview(page, "?start_date=2025-06-01&end_date=2025-06-30");
+  const june = await apiOverview(page, "start_date=2025-06-01&end_date=2025-06-30");
   expect(june.kpis.total_trips!.value).toBe(4322709);
 });
 

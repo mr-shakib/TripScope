@@ -3,14 +3,14 @@ import { Suspense } from "react";
 
 import { LoadingBlock } from "@/components/ui/states";
 
-import { ExploreView } from "./explore-view";
+import { DashboardsView } from "./dashboards-view";
 
-export const metadata: Metadata = { title: "Explore data" };
+export const metadata: Metadata = { title: "Dashboards" };
 
-export default function ExplorePage() {
+export default function DashboardsPage() {
   return (
     <Suspense fallback={<LoadingBlock className="h-[60vh]" />}>
-      <ExploreView />
+      <DashboardsView />
     </Suspense>
   );
 }

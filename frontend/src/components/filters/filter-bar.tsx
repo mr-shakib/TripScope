@@ -1,22 +1,25 @@
 "use client";
 
-import { CalendarRange, Check, ChevronDown, Clock, CreditCard, MapPin, RotateCcw, Search, X } from "lucide-react";
+import { CalendarRange, Car, Check, ChevronDown, Clock, CreditCard, MapPin, MapPinned, RotateCcw, Route, Search, X } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { useZones } from "@/api/hooks";
 import type { Coverage, DashboardFilters, Zone } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { Popover } from "@/components/ui/overlays";
+import { Popover, Tooltip } from "@/components/ui/overlays";
 import { cn } from "@/lib/cn";
 import {
   activeFilterCount,
   coveragePresets,
+  DISTANCE_PRESETS,
   EMPTY_FILTERS,
   HOUR_PRESETS,
   monthPresets,
   PAYMENT_TYPES,
   setDates,
+  setDistance,
   toggleValue,
+  VENDORS,
   WEEKDAYS,
 } from "@/lib/filters";
 import { formatDate } from "@/lib/format";
@@ -135,10 +138,11 @@ function DateRange({ coverage, filters, onChange }: FilterBarProps) {
 const AIRPORTS = [132, 138, 1];
 const BOROUGH_ORDER = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "EWR"];
 
-function ZonePicker({ filters, onChange }: Omit<FilterBarProps, "coverage">) {
+function ZonePicker({ filters, onChange, field }: Omit<FilterBarProps, "coverage"> & { field: "pickup_zone" | "dropoff_zone" }) {
   const zones = useZones();
   const [query, setQuery] = useState("");
-  const selected = filters.pickup_zone;
+  const selected = filters[field];
+  const label = field === "pickup_zone" ? "Pickup" : "Drop-off";
   const grouped = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const list = (zones.data ?? []).filter(
@@ -159,7 +163,15 @@ function ZonePicker({ filters, onChange }: Omit<FilterBarProps, "coverage">) {
   return (
     <Popover
       className="w-[min(92vw,380px)] p-0"
-      trigger={<TriggerButton icon={<MapPin className="size-4" />} label="Pickup" value={value} active={selected.length > 0} data-testid="filter-zones" />}
+      trigger={
+        <TriggerButton
+          icon={field === "pickup_zone" ? <MapPin className="size-4" /> : <MapPinned className="size-4" />}
+          label={label}
+          value={value}
+          active={selected.length > 0}
+          data-testid={field === "pickup_zone" ? "filter-zones" : "filter-dropoff"}
+        />
+      }
     >
       <div className="border-b border-line p-3">
         <div className="relative">
@@ -169,20 +181,20 @@ function ZonePicker({ filters, onChange }: Omit<FilterBarProps, "coverage">) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search zones or boroughs"
-            aria-label="Search pickup zones"
+            aria-label={`Search ${label.toLowerCase()} zones`}
             className="h-9 w-full rounded-lg border border-line-strong bg-surface pl-8 pr-3 text-[13px] outline-none focus:border-accent focus:ring-4 focus:ring-[var(--accent-ring)]"
           />
         </div>
         <div className="mt-2 flex gap-1.5">
-          <Button size="sm" variant="ghost" onClick={() => onChange({ ...filters, pickup_zone: AIRPORTS })}>
+          <Button size="sm" variant="ghost" onClick={() => onChange({ ...filters, [field]: AIRPORTS })}>
             Airports
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => onChange({ ...filters, pickup_zone: [] })} disabled={!selected.length}>
+          <Button size="sm" variant="ghost" onClick={() => onChange({ ...filters, [field]: [] })} disabled={!selected.length}>
             Clear
           </Button>
         </div>
       </div>
-      <div className="scroll-thin max-h-80 overflow-y-auto p-1.5" role="listbox" aria-multiselectable aria-label="Pickup zones">
+      <div className="scroll-thin max-h-80 overflow-y-auto p-1.5" role="listbox" aria-multiselectable aria-label={`${label} zones`}>
         {grouped.map(([borough, list]) => (
           <div key={borough} className="mb-1">
             <p className="sticky top-0 bg-surface px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-faint">{borough}</p>
@@ -194,7 +206,7 @@ function ZonePicker({ filters, onChange }: Omit<FilterBarProps, "coverage">) {
                   type="button"
                   role="option"
                   aria-selected={isSelected}
-                  onClick={() => onChange(toggleValue(filters, "pickup_zone", zone.id))}
+                  onClick={() => onChange(toggleValue(filters, field, zone.id))}
                   className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-2 hover:bg-surface-3 hover:text-ink"
                 >
                   <span className={cn("flex size-4 shrink-0 items-center justify-center rounded border", isSelected ? "border-accent bg-accent text-white" : "border-line-strong")}>
@@ -272,6 +284,56 @@ function TimePicker({ filters, onChange }: Omit<FilterBarProps, "coverage">) {
   );
 }
 
+function TripPicker({ filters, onChange }: Omit<FilterBarProps, "coverage">) {
+  const { min_distance: min, max_distance: max } = filters;
+  const distance = min === undefined && max === undefined ? null : max === undefined ? `${min}+ mi` : `${min ?? 0}–${max} mi`;
+  const parts = [distance, filters.vendor_id.length ? `${filters.vendor_id.length} vendor${filters.vendor_id.length > 1 ? "s" : ""}` : null].filter(Boolean);
+  const number = (value: string) => (value === "" ? undefined : Math.max(0, Math.min(1000, Number(value))));
+  return (
+    <Popover
+      className="w-[min(92vw,340px)]"
+      trigger={<TriggerButton icon={<Route className="size-4" />} label="Trip" value={parts.join(" · ") || "Any"} active={parts.length > 0} data-testid="filter-trip" />}
+    >
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-faint">Trip distance</p>
+      <div className="grid grid-cols-2 gap-1.5">
+        {DISTANCE_PRESETS.map((preset) => (
+          <OptionChip key={preset.id} selected={min === preset.min && max === preset.max} onClick={() => onChange(setDistance(filters, preset.min, preset.max))}>
+            {preset.label}
+          </OptionChip>
+        ))}
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {(["min", "max"] as const).map((bound) => (
+          <label key={bound} className="text-xs text-ink-muted">
+            {bound === "min" ? "Min miles" : "Max miles"}
+            <input
+              type="number"
+              min={0}
+              max={1000}
+              step="0.1"
+              aria-label={bound === "min" ? "Minimum distance" : "Maximum distance"}
+              value={(bound === "min" ? min : max) ?? ""}
+              onChange={(e) =>
+                onChange(bound === "min" ? setDistance(filters, number(e.target.value), max) : setDistance(filters, min, number(e.target.value)))
+              }
+              className="mt-1 h-9 w-full rounded-lg border border-line-strong bg-surface px-2 text-[13px] text-ink outline-none focus:border-accent focus:ring-4 focus:ring-[var(--accent-ring)]"
+            />
+          </label>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-ink-muted">Distance filters read the full trip table, so they are slower than the others.</p>
+      <p className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-faint">Vendor (TPEP provider)</p>
+      <div className="grid gap-1.5">
+        {VENDORS.map((vendor) => (
+          <OptionChip key={vendor.id} selected={filters.vendor_id.includes(vendor.id)} onClick={() => onChange(toggleValue(filters, "vendor_id", vendor.id))}>
+            {vendor.label}
+          </OptionChip>
+        ))}
+      </div>
+    </Popover>
+  );
+}
+
 function Chip({ children, onRemove, label }: { children: ReactNode; onRemove: () => void; label: string }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface py-0.5 pl-2.5 pr-1 text-xs text-ink-2 shadow-card animate-fade-in">
@@ -290,10 +352,17 @@ export function FilterBar({ coverage, filters, onChange }: FilterBarProps) {
   return (
     <div className="space-y-2.5" role="group" aria-label="Filters">
       <div className="flex flex-wrap items-center gap-2">
+        <Tooltip content="Yellow Taxi is the only vehicle type published so far; Green and FHV arrive in later phases.">
+          <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-dashed border-line-strong px-3 text-[13px] text-ink-2" data-testid="vehicle-type">
+            <Car className="size-4 text-ink-muted" /> Yellow taxi
+          </span>
+        </Tooltip>
         <DateRange coverage={coverage} filters={filters} onChange={onChange} />
-        <ZonePicker filters={filters} onChange={onChange} />
+        <ZonePicker filters={filters} onChange={onChange} field="pickup_zone" />
+        <ZonePicker filters={filters} onChange={onChange} field="dropoff_zone" />
         <PaymentPicker filters={filters} onChange={onChange} />
         <TimePicker filters={filters} onChange={onChange} />
+        <TripPicker filters={filters} onChange={onChange} />
         {count > 0 ? (
           <Button variant="ghost" size="sm" onClick={() => onChange(EMPTY_FILTERS)} className="text-accent-strong">
             <RotateCcw className="size-3.5" /> Reset
@@ -308,10 +377,25 @@ export function FilterBar({ coverage, filters, onChange }: FilterBarProps) {
             </Chip>
           ) : null}
           {filters.pickup_zone.map((id) => (
-            <Chip key={`z${id}`} label={`zone ${id}`} onRemove={() => onChange(toggleValue(filters, "pickup_zone", id))}>
-              {names.get(id) ?? `Zone ${id}`}
+            <Chip key={`z${id}`} label={`pickup zone ${id}`} onRemove={() => onChange(toggleValue(filters, "pickup_zone", id))}>
+              <span className="text-ink-muted">From</span> {names.get(id) ?? `Zone ${id}`}
             </Chip>
           ))}
+          {filters.dropoff_zone.map((id) => (
+            <Chip key={`d${id}`} label={`drop-off zone ${id}`} onRemove={() => onChange(toggleValue(filters, "dropoff_zone", id))}>
+              <span className="text-ink-muted">To</span> {names.get(id) ?? `Zone ${id}`}
+            </Chip>
+          ))}
+          {filters.vendor_id.map((id) => (
+            <Chip key={`v${id}`} label={`vendor ${id}`} onRemove={() => onChange(toggleValue(filters, "vendor_id", id))}>
+              {VENDORS.find((v) => v.id === id)?.label ?? `Vendor ${id}`}
+            </Chip>
+          ))}
+          {filters.min_distance !== undefined || filters.max_distance !== undefined ? (
+            <Chip label="distance" onRemove={() => onChange(setDistance(filters))}>
+              {filters.max_distance === undefined ? `${filters.min_distance}+ mi` : `${filters.min_distance ?? 0}–${filters.max_distance} mi`}
+            </Chip>
+          ) : null}
           {filters.payment_type.map((id) => (
             <Chip key={`p${id}`} label="payment type" onRemove={() => onChange(toggleValue(filters, "payment_type", id))}>
               {PAYMENT_TYPES.find((p) => p.id === id)?.label}
