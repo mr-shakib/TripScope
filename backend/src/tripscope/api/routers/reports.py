@@ -24,6 +24,7 @@ from tripscope.metadata.audit import record_audit
 from tripscope.metadata.models import JobStatus, Report, ReportFormat, ReportRun, Role, User
 from tripscope.reports import service
 from tripscope.reports.builder import ReportBuilder
+from tripscope.reports.narrative import fingerprint
 from tripscope.reports.templates import TEMPLATES
 from tripscope.reports.worker import CONTENT_TYPES
 
@@ -32,7 +33,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 Author = Annotated[CurrentUser, Depends(require_roles(Role.ADMIN, Role.ANALYST))]
 TemplateId = Literal[
-    "executive_overview", "demand_patterns", "fares_distance", "zone_analysis", "data_quality"
+    "executive_overview", "demand_patterns", "fares_distance", "zone_analysis", "data_quality", "custom_ai"
 ]
 SectionId = Annotated[str, Field(pattern=r"^[a-z_]{1,40}$")]
 FormatId = Literal["pdf", "xlsx", "csv"]
@@ -105,6 +106,30 @@ def _run_dict(run: ReportRun) -> dict[str, Any]:
     }
 
 
+def _narrative_summary(report: Report) -> dict[str, Any] | None:
+    """Template 6: whether an AI narrative exists and is current for the report's filters and sections."""
+    narrative = report.narrative
+    if report.template != "custom_ai":
+        return None
+    if not narrative:
+        return {"status": "none"}
+    status = narrative.get("status", "none")
+    if status == "ready" and narrative.get("basis") != fingerprint(
+        report.template, report.filters, report.sections
+    ):
+        status = "stale"
+    return {
+        "status": status,
+        "model": narrative.get("model"),
+        "generated_at": narrative.get("generated_at"),
+        "figures": narrative.get("figures", 0),
+        "figures_verified": narrative.get("figures_verified", 0),
+        "dropped": len(narrative.get("dropped", [])),
+        "error": narrative.get("error"),
+        "focus": narrative.get("focus"),
+    }
+
+
 def _report_dict(report: Report, user: CurrentUser, *, with_runs: bool) -> dict[str, Any]:
     spec = TEMPLATES[report.template]
     latest: dict[str, Any] = {}
@@ -127,6 +152,7 @@ def _report_dict(report: Report, user: CurrentUser, *, with_runs: bool) -> dict[
             "generate": service.can_generate(report, user),
         },
         "latest_runs": latest,
+        "narrative": _narrative_summary(report),
     }
     if with_runs:
         data["runs"] = [_run_dict(run) for run in report.runs[:100]]
@@ -241,8 +267,14 @@ def preview(report_id: uuid.UUID, request: Request, user: AuthenticatedUser) -> 
         report = service.get_report(session, report_id, user)
         template, title, sections = report.template, report.title, list(report.sections)
         filters, prepared_by = service.report_filters(report), report.creator.display_name
+        narrative = report.narrative
     doc = ReportBuilder(request.app.state.analytics).build(
-        template=template, title=title, filters=filters, sections=sections, prepared_by=prepared_by
+        template=template,
+        title=title,
+        filters=filters,
+        sections=sections,
+        prepared_by=prepared_by,
+        narrative=narrative,
     )
     return doc.model_dump(mode="json")
 

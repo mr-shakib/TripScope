@@ -95,7 +95,7 @@ def audit_count(env: dict[str, Any], action: str, target: str) -> int:
 
 def test_templates_and_validation(as_: dict[str, TestClient]) -> None:
     catalogue = as_["viewer"].get("/api/v1/reports/templates").json()
-    assert [t["number"] for t in catalogue["templates"]] == [1, 2, 3, 4, 5]
+    assert [t["number"] for t in catalogue["templates"]] == [1, 2, 3, 4, 5, 6]
     assert catalogue["formats"] == ["pdf", "xlsx", "csv"]
     analyst = as_["analyst"]
     assert as_["viewer"].post("/api/v1/reports", json={"template": "executive_overview"}).status_code == 403

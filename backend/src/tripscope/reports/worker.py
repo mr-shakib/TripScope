@@ -132,6 +132,7 @@ class ReportWorker:
             filters=service.report_filters(definition),
             sections=list(definition["sections"]),
             prepared_by=prepared_by,
+            narrative=definition.get("narrative"),
         )
         rendered = render(doc, fmt, definition)
         digest = hashlib.sha256(rendered.data).hexdigest()

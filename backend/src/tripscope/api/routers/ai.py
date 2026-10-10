@@ -8,7 +8,7 @@ allowlisted tools in `tripscope.ai.tools`.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -34,6 +34,26 @@ class ChatRequest(BaseModel):
         return self
 
 
+class OutlineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filters: AnalyticsFilters = Field(default_factory=AnalyticsFilters)
+    focus: str = Field(default="", max_length=600)
+
+
+class DraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, max_length=200)
+    filters: AnalyticsFilters = Field(default_factory=AnalyticsFilters)
+    sections: list[Annotated[str, Field(pattern=r"^[a-z_]{1,40}$")]] = Field(min_length=1, max_length=15)
+    focus: str = Field(default="", max_length=600)
+    visibility: Literal["private", "shared"] = "private"
+
+
+class RedraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    focus: str | None = Field(default=None, max_length=600)
+
+
 class ListQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     limit: int = Field(default=50, ge=1, le=200)
@@ -56,6 +76,34 @@ def chat(body: ChatRequest, request: Request, user: AuthenticatedUser) -> dict[s
             demo_id=body.demo_id,
         )
     )
+
+
+@router.post("/report-outline")
+def report_outline(body: OutlineRequest, request: Request, user: AuthenticatedUser) -> dict[str, Any]:
+    """FR-11 step 2: the model proposes a title and sections from the template-6 library."""
+    return dict(request.app.state.ai.outline(user, filters=body.filters, focus=body.focus))
+
+
+@router.post("/report-draft", status_code=202)
+def report_draft(body: DraftRequest, request: Request, user: AuthenticatedUser) -> dict[str, str]:
+    """FR-11 steps 3 to 6: create the report now and draft its verified narrative in the background."""
+    return dict(
+        request.app.state.ai.draft_report(
+            user,
+            title=body.title,
+            filters=body.filters,
+            sections=body.sections,
+            focus=body.focus,
+            visibility=body.visibility,
+        )
+    )
+
+
+@router.post("/reports/{report_id}/redraft", status_code=202)
+def redraft(
+    report_id: uuid.UUID, body: RedraftRequest, request: Request, user: AuthenticatedUser
+) -> dict[str, str]:
+    return dict(request.app.state.ai.redraft(user, report_id, body.focus))
 
 
 @router.get("/conversations")

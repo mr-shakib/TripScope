@@ -38,7 +38,7 @@ from reportlab.platypus import (
 )
 
 from tripscope.reports import formatting as f
-from tripscope.reports.document import ChartBlock, Column, ReportDocument, Section, TableBlock
+from tripscope.reports.document import ChartBlock, Column, ReportDocument, Section, TableBlock, narrative_note
 
 FONT_DIR = Path(__file__).parent / "fonts"
 
@@ -521,6 +521,9 @@ def render_pdf(doc: ReportDocument) -> tuple[bytes, int]:
         _p("Executive summary", "h2"),
         _bullets(doc.summary),
     ]
+    note = narrative_note(doc.narrative)
+    if note:
+        story += [Spacer(1, 3), _p(note, "small")]
     if doc.kpis:
         story += [_p("Key figures", "h2"), Spacer(1, 2), _kpi_table(doc)]
         if not doc.comparison.available and doc.comparison.reason:
@@ -538,9 +541,10 @@ def render_pdf(doc: ReportDocument) -> tuple[bytes, int]:
             source = finding.evidence.source + (
                 f" ({finding.evidence.source_table})" if finding.evidence.source_table else ""
             )
+            kind = " <i>(hypothesis)</i>" if finding.kind == "hypothesis" else ""
             items: list[Flowable] = [
                 Paragraph(
-                    f'<font name="Geist-SemiBold">{number}.</font> {escape(finding.statement)}',
+                    f'<font name="Geist-SemiBold">{number}.</font> {escape(finding.statement)}{kind}',
                     STYLES["body"],
                 ),
                 _p(f"Evidence: {source}: {values}", "small"),
@@ -548,6 +552,9 @@ def render_pdf(doc: ReportDocument) -> tuple[bytes, int]:
             if finding.caveat:
                 items.append(_p(f"Caveat: {finding.caveat}", "small"))
             story.append(KeepTogether([Spacer(1, 4), *items]))
+    if doc.recommendations:
+        story += [_p("Suggested next steps", "h2"), _p("Drafted by the AI analyst; not findings.", "muted")]
+        story += [_bullets(doc.recommendations)]
     story += [
         CondPageBreak(40 * mm),
         _p("Dataset version", "h2"),

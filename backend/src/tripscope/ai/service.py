@@ -23,12 +23,22 @@ from tripscope.ai.provider import LLMProvider
 from tripscope.ai.tools import ToolContext, ToolRun
 from tripscope.analytics.filters import AnalyticsFilters
 from tripscope.analytics.service import AnalyticsService
-from tripscope.core.errors import AIUnavailableError, ConflictError, NotFoundError, PermissionDeniedError
+from tripscope.core.errors import (
+    AIUnavailableError,
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    TripScopeError,
+)
 from tripscope.core.settings import Settings
 from tripscope.metadata.audit import record_audit
-from tripscope.metadata.models import AIConversation, AIMessage, AIToolRun, Role
+from tripscope.metadata.models import AIConversation, AIMessage, AIToolRun, Report, Role
 from tripscope.reports import service as reports
+from tripscope.reports.builder import ReportBuilder
+from tripscope.reports.narrative import TEMPLATE as NARRATIVE_TEMPLATE
+from tripscope.reports.narrative import draft_narrative, fingerprint, propose_outline
 from tripscope.reports.service import Actor
+from tripscope.reports.templates import TEMPLATES
 
 log = logging.getLogger(__name__)
 
@@ -239,6 +249,129 @@ class AIAnalyst:
             ) or ""
             message.payload = _json(result.payload())
             message.finished_at = _now()
+
+    # ---- AI-assisted reports (template 6) -----------------------------------------------------------------
+
+    def _require_author(self, user: Actor) -> None:
+        if user.role not in (Role.ADMIN, Role.ANALYST):
+            raise PermissionDeniedError("only analysts and administrators create reports")
+        if not self.provider.enabled:
+            raise AIUnavailableError(self.provider.reason or "the AI analyst is not configured")
+
+    def outline(self, user: Actor, *, filters: AnalyticsFilters, focus: str) -> dict[str, Any]:
+        self._require_author(user)
+        coverage = self.analytics.coverage(filters.dataset_id)
+        span = (
+            f"{coverage.dataset_name}, {coverage.start} to {coverage.end}" if coverage.start else "none yet"
+        )
+        applied = {k: v for k, v in filters.applied().items() if k != "dataset_id"}
+        scope = ", ".join(f"{k}={v}" for k, v in applied.items()) or "all published data, no filters"
+        result = propose_outline(self.provider, coverage=span, scope=scope, focus=focus)
+        library = TEMPLATES[NARRATIVE_TEMPLATE].sections
+        return {
+            "title": result.title,
+            "sections": result.sections,
+            "rationale": result.rationale,
+            "library": [{"id": s.id, "title": s.title, "description": s.description} for s in library],
+            "model": self.provider.model,
+        }
+
+    def draft_report(
+        self,
+        user: Actor,
+        *,
+        title: str | None,
+        filters: AnalyticsFilters,
+        sections: list[str],
+        focus: str,
+        visibility: str,
+    ) -> dict[str, str]:
+        self._require_author(user)
+        with self.sessions() as session, session.begin():
+            report = reports.create_report(
+                session,
+                template=NARRATIVE_TEMPLATE,
+                title=title,
+                filters=filters,
+                sections=sections,
+                visibility=visibility,
+                user=user,
+            )
+            report.narrative = {
+                "status": "drafting",
+                "focus": focus,
+                "basis": fingerprint(report.template, report.filters, report.sections),
+            }
+            record_audit(
+                session,
+                action="report.created",
+                outcome="success",
+                actor_user_id=user.id,
+                target_type="report",
+                target_id=str(report.id),
+                details={
+                    "template": NARRATIVE_TEMPLATE,
+                    "visibility": visibility,
+                    "source": "ai_report_draft",
+                },
+            )
+            report_id = report.id
+        self.executor.submit(self._draft, report_id, focus)
+        return {"report_id": str(report_id)}
+
+    def redraft(self, user: Actor, report_id: uuid.UUID, focus: str | None) -> dict[str, str]:
+        self._require_author(user)
+        with self.sessions() as session, session.begin():
+            report = reports.get_report(session, report_id, user)
+            reports.require(reports.can_edit(report, user), "redraft")
+            if report.template != NARRATIVE_TEMPLATE:
+                raise ConflictError("only AI-assisted reports (template 6) have an AI narrative")
+            if (report.narrative or {}).get("status") == "drafting":
+                raise ConflictError("the narrative is already being drafted")
+            keep = focus if focus is not None else (report.narrative or {}).get("focus", "")
+            report.narrative = {
+                "status": "drafting",
+                "focus": keep,
+                "basis": fingerprint(report.template, report.filters, report.sections),
+            }
+        self.executor.submit(self._draft, report_id, keep)
+        return {"report_id": str(report_id)}
+
+    def _draft(self, report_id: uuid.UUID, focus: str) -> None:
+        with self.sessions() as session:
+            report = session.get(Report, report_id)
+            if report is None:
+                return
+            template, title, sections = report.template, report.title, list(report.sections)
+            filters, prepared_by = reports.report_filters(report), report.creator.display_name
+            basis = fingerprint(report.template, report.filters, report.sections)
+        try:
+            doc = ReportBuilder(self.analytics).build(
+                template=template, title=title, filters=filters, sections=sections, prepared_by=prepared_by
+            )
+            narrative = draft_narrative(self.provider, doc, basis=basis, focus=focus)
+        except TripScopeError as exc:
+            narrative = {"status": "failed", "error": exc.message, "basis": basis, "focus": focus}
+        except Exception:
+            log.exception("report narrative failed", extra={"report_id": str(report_id)})
+            narrative = {"status": "failed", "error": "internal error", "basis": basis, "focus": focus}
+        with self.sessions() as session, session.begin():
+            report = session.get(Report, report_id)
+            if report is None:
+                return
+            report.narrative = narrative
+            record_audit(
+                session,
+                action="report.ai_drafted",
+                outcome="success" if narrative["status"] == "ready" else "failure",
+                actor_user_id=report.created_by,
+                target_type="report",
+                target_id=str(report_id),
+                details={
+                    k: narrative.get(k) for k in ("status", "model", "figures", "figures_verified", "error")
+                }
+                | {"dropped": len(narrative.get("dropped", []))},
+            )
 
     # ---- reading ---------------------------------------------------------------------------------------
 

@@ -144,6 +144,41 @@ class Comparison(_Model):
     reason: str | None = None
 
 
+class NarrativeInfo(_Model):
+    """Where the summary and findings came from (template 6) and how their figures were checked."""
+
+    source: Literal["ai", "rules"]
+    status: Literal["none", "drafting", "ready", "stale", "failed"]
+    model: str | None = None
+    provider: str | None = None
+    generated_at: datetime | None = None
+    figures: int = 0
+    figures_verified: int = 0
+    dropped: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+def narrative_note(info: NarrativeInfo | None) -> str | None:
+    """One line on where the summary and findings came from (template 6 only)."""
+    if info is None:
+        return None
+    if info.source == "ai":
+        removed = (
+            f"; {len(info.dropped)} sentence(s) without matching figures were removed" if info.dropped else ""
+        )
+        return (
+            f"Summary and findings drafted by {info.model or 'the AI analyst'} from this report's results; "
+            f"{info.figures_verified} of {info.figures} figures checked against them{removed}."
+        )
+    reason = {
+        "none": "no AI narrative has been drafted yet",
+        "drafting": "the AI narrative is still being drafted",
+        "stale": "the AI narrative was drafted for other filters or sections",
+        "failed": f"drafting the AI narrative failed ({info.error or 'unknown error'})",
+    }.get(info.status, info.status)
+    return f"Rule-based summary and findings: {reason}."
+
+
 class ReportDocument(_Model):
     schema_version: Literal[1] = 1
     template: str
@@ -162,3 +197,5 @@ class ReportDocument(_Model):
     findings: list[Finding]
     methodology: list[str]
     limitations: list[str]
+    recommendations: list[str] = Field(default_factory=list)  # AI-drafted next steps (template 6), no figures
+    narrative: NarrativeInfo | None = None
