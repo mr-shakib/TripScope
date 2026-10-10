@@ -45,7 +45,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
       { href: "/dashboards", label: "Dashboards", icon: ChartColumn, keepsFilters: true },
       { href: "/explore", label: "Explore data", icon: Compass, keepsFilters: true },
       { href: "/ai", label: "AI analyst", icon: Sparkles, phase: 5 },
-      { href: "/reports", label: "Reports", icon: FileText, phase: 4 },
+      { href: "/reports", label: "Reports", icon: FileText, keepsFilters: true },
     ],
   },
   {

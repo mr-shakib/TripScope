@@ -4,10 +4,12 @@ import {
   activeFilterCount,
   coveragePresets,
   EMPTY_FILTERS,
+  fromApiBody,
   monthPresets,
   rangeDays,
   readFilters,
   setDates,
+  toApiBody,
   toggleValue,
   writeFilters,
 } from "./filters";
@@ -81,5 +83,26 @@ describe("filter helpers", () => {
   it("compute inclusive range length", () => {
     expect(rangeDays({}, coverage)).toBe(181);
     expect(rangeDays({ start_date: "2025-01-06", end_date: "2025-01-12" }, coverage)).toBe(7);
+  });
+});
+
+describe("report filters", () => {
+  it("round-trip through the API body a report stores", () => {
+    const filters = {
+      ...EMPTY_FILTERS,
+      start_date: "2025-03-01",
+      end_date: "2025-03-31",
+      pickup_zone: [132, 161],
+      payment_type: [1],
+      weekday: [6, 7],
+      min_distance: 2,
+      max_distance: 5,
+    };
+    expect(fromApiBody({ ...toApiBody(filters), dataset_id: "nyc-tlc-yellow" })).toEqual(filters);
+  });
+
+  it("drop malformed or out-of-range values", () => {
+    expect(fromApiBody({ start_date: "March", hour: [8, 99, "x"], pickup_zone: "132" })).toEqual({ ...EMPTY_FILTERS, hour: [8] });
+    expect(fromApiBody(null)).toEqual(EMPTY_FILTERS);
   });
 });

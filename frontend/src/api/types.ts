@@ -339,3 +339,142 @@ export interface ExplorerRowsResponse {
 }
 
 export type QualityScope = "all" | "clean" | "flagged";
+
+// ---- Phase 4: report center ----------------------------------------------------------------------------
+
+export type ReportFormat = "pdf" | "xlsx" | "csv";
+export type ReportVisibility = "private" | "shared";
+
+export interface ReportTemplate {
+  id: string;
+  number: number;
+  title: string;
+  description: string;
+  kpis: string[];
+  sections: { id: string; title: string; description: string }[];
+}
+
+export interface Person {
+  id: string;
+  name: string;
+}
+
+export interface ReportRun {
+  run_id: string;
+  format: ReportFormat;
+  status: JobStatus;
+  requested_by: Person | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  error_summary: string | null;
+  file_name: string | null;
+  size_bytes: number | null;
+  sha256: string | null;
+  page_count: number | null;
+  dataset_version_id: string | null;
+  title: string | null;
+}
+
+export interface ReportSummary {
+  report_id: string;
+  template: string;
+  template_title: string;
+  title: string;
+  dataset_id: string;
+  filters: Record<string, unknown>;
+  sections: string[];
+  visibility: ReportVisibility;
+  created_by: Person | null;
+  created_at: string;
+  updated_at: string;
+  permissions: { edit: boolean; generate: boolean };
+  latest_runs: Partial<Record<ReportFormat, ReportRun>>;
+}
+
+export interface ReportDetail extends ReportSummary {
+  runs: ReportRun[];
+}
+
+/** Units in a report document: the metric units plus counts, shares (fractions) and plain text. */
+export type ReportUnit = Unit | "rows" | "count" | "share" | "seconds" | "bytes" | "date" | "text";
+
+export interface ReportKpi {
+  id: string;
+  label: string;
+  unit: ReportUnit;
+  value: number | null;
+  display: string;
+  previous: number | null;
+  previous_display: string | null;
+  change: number | null;
+  change_display: string | null;
+  excluded_rows: number;
+  note: string | null;
+}
+
+export interface ReportTableBlock {
+  type: "table";
+  id: string;
+  title: string;
+  columns: { key: string; label: string; unit: ReportUnit }[];
+  rows: (string | number | boolean | null)[][];
+  display: string[][];
+  note: string | null;
+}
+
+export interface ReportChartBlock {
+  type: "chart";
+  id: string;
+  title: string;
+  kind: "line" | "column" | "bar" | "heatmap" | "histogram";
+  unit: ReportUnit;
+  categories: string[];
+  series: { name: string; values: (number | null)[] }[];
+  rows: string[];
+  matrix: (number | null)[][];
+  markers: { index: number; label: string }[];
+  note: string | null;
+}
+
+export interface ReportSection {
+  id: string;
+  title: string;
+  description: string;
+  blocks: (ReportTableBlock | ReportChartBlock)[];
+}
+
+export interface ReportFinding {
+  id: string;
+  section: string;
+  statement: string;
+  kind: "descriptive" | "predictive" | "hypothesis";
+  evidence: { source: string; source_table: string | null; values: Record<string, string | number | boolean | null> };
+  caveat: string | null;
+}
+
+export interface ReportDocument {
+  template: string;
+  template_title: string;
+  title: string;
+  period: { start: string; end: string; days: number; label: string; data_first: string | null; data_last: string | null };
+  filters: { label: string; value: string }[];
+  applied_filters: Record<string, unknown>;
+  dataset: {
+    id: string;
+    name: string;
+    attribution: string;
+    version_id: string;
+    periods: { period: string; run_id: string; row_count: number; published_at: string }[];
+  };
+  generated_at: string;
+  prepared_by: string;
+  summary: string[];
+  kpis: ReportKpi[];
+  comparison: { available: boolean; label: string | null; start: string | null; end: string | null; reason: string | null };
+  sections: ReportSection[];
+  findings: ReportFinding[];
+  methodology: string[];
+  limitations: string[];
+}

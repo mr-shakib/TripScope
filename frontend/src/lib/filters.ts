@@ -93,6 +93,24 @@ export function toApiBody(filters: DashboardFilters): Record<string, unknown> {
   );
 }
 
+/** Filters stored with a report (the API's applied filters) back into dashboard filters; unknown keys are ignored. */
+export function fromApiBody(body: Record<string, unknown> | null | undefined): DashboardFilters {
+  const filters: DashboardFilters = { ...EMPTY_FILTERS };
+  if (!body) return filters;
+  if (typeof body.start_date === "string" && ISO_DATE.test(body.start_date)) filters.start_date = body.start_date;
+  if (typeof body.end_date === "string" && ISO_DATE.test(body.end_date)) filters.end_date = body.end_date;
+  for (const [field, spec] of Object.entries(URL_KEYS) as [ListKey, (typeof URL_KEYS)[ListKey]][]) {
+    const raw = body[field];
+    if (Array.isArray(raw)) {
+      const values = raw.map(Number).filter((v) => Number.isInteger(v) && v >= spec.min && v <= spec.max);
+      filters[field] = [...new Set(values)].sort((a, b) => a - b);
+    }
+  }
+  if (typeof body.min_distance === "number") filters.min_distance = body.min_distance;
+  if (typeof body.max_distance === "number") filters.max_distance = body.max_distance;
+  return filters;
+}
+
 export function setDistance(filters: DashboardFilters, min?: number, max?: number): DashboardFilters {
   const next: DashboardFilters = { ...filters };
   delete next.min_distance;

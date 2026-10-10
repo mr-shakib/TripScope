@@ -1,11 +1,11 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Download, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Download, FileSpreadsheet, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { ApiError } from "@/api/client";
-import { downloadExtract, type RowScope, useDataset, useExplorerFields, useExplorerRows, useZones } from "@/api/hooks";
+import { downloadExtract, type RowScope, saveBlob, useDataset, useExplorerFields, useExplorerRows, useZones } from "@/api/hooks";
 import type { ExplorerField, ExplorerRow, QualityScope } from "@/api/types";
 import { FilterBar } from "@/components/filters/filter-bar";
 import { PageHeader } from "@/components/layout/app-shell";
@@ -97,7 +97,7 @@ export function ExploreView() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [columns, setColumns] = useState<string[]>(DEFAULT_COLUMNS);
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState<"csv" | "xlsx" | null>(null);
   const [downloading, setDownloading] = useState(false);
   const scopeKey = JSON.stringify([filters, scope, pageSize]);
   const [lastScope, setLastScope] = useState(scopeKey);
@@ -153,16 +153,11 @@ export function ExploreView() {
     return String(value);
   };
 
-  const download = async () => {
+  const download = async (format: "csv" | "xlsx") => {
     setDownloading(true);
     try {
-      const result = await downloadExtract(filters, scope, columns);
-      const url = URL.createObjectURL(result.blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = result.fileName;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      const result = await downloadExtract(filters, scope, columns, format);
+      saveBlob(result.blob, result.fileName);
       toast.success(`Downloaded ${formatInteger(result.exportedRows)} rows`, {
         description: result.truncated ? `First ${formatInteger(result.exportedRows)} of ${formatInteger(result.totalRows)} matching rows (export limit).` : "All matching rows.",
       });
@@ -235,7 +230,10 @@ export function ExploreView() {
               </div>
             </Popover>
             <div className="ml-auto flex items-center gap-2">
-              <Button variant="primary" size="sm" onClick={() => setConfirm(true)} disabled={!total || downloading} data-testid="download-csv">
+              <Button variant="secondary" size="sm" onClick={() => setConfirm("xlsx")} disabled={!total || downloading} data-testid="download-xlsx">
+                <FileSpreadsheet className="size-3.5" /> Excel
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => setConfirm("csv")} disabled={!total || downloading} data-testid="download-csv">
                 <Download className="size-3.5" /> {downloading ? "Preparing…" : "Download CSV"}
               </Button>
             </div>
@@ -318,16 +316,18 @@ export function ExploreView() {
         </Card>
       </div>
       <ConfirmDialog
-        open={confirm}
-        onOpenChange={setConfirm}
-        title="Download a CSV extract?"
+        open={confirm !== null}
+        onOpenChange={(open) => !open && setConfirm(null)}
+        title={confirm === "xlsx" ? "Download an Excel extract?" : "Download a CSV extract?"}
         description={
           total > limit
             ? `${formatInteger(total)} rows match. The first ${formatInteger(limit)} (in the current sort order) will be exported with the ${columns.length} visible columns. Narrow the filters for a complete extract.`
             : `All ${formatInteger(total)} matching rows will be exported with the ${columns.length} visible columns. Downloads are logged.`
         }
         confirmLabel="Download"
-        onConfirm={() => void download()}
+        onConfirm={() => {
+          if (confirm) void download(confirm);
+        }}
       />
     </div>
   );

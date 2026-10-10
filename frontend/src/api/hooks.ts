@@ -15,6 +15,13 @@ import type {
   MatrixResponse,
   MetricDefinition,
   QualityScope,
+  ReportDetail,
+  ReportDocument,
+  ReportFormat,
+  ReportRun,
+  ReportSummary,
+  ReportTemplate,
+  ReportVisibility,
   ZoneFeatureCollection,
   DashboardFilters,
   DataSourceItem,
@@ -170,14 +177,19 @@ export interface ExtractResult {
   truncated: boolean;
 }
 
-/** POST /exports and return the CSV as a Blob (the browser then saves it). */
-export async function downloadExtract(filters: DashboardFilters, scope: RowScope, columns?: string[]): Promise<ExtractResult> {
+/** POST /exports and return the file as a Blob (the browser then saves it). */
+export async function downloadExtract(
+  filters: DashboardFilters,
+  scope: RowScope,
+  columns?: string[],
+  format: "csv" | "xlsx" = "csv",
+): Promise<ExtractResult> {
   const response = await fetch("/api/v1/exports", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      format: "csv",
+      format,
       filters: { dataset_id: DATASET_ID, ...toApiBody(filters) },
       scope: { sort: scope.sort, order: scope.order, quality: scope.quality, ...(scope.flag ? { flag: scope.flag } : {}) },
       ...(columns ? { columns } : {}),
@@ -190,7 +202,7 @@ export async function downloadExtract(filters: DashboardFilters, scope: RowScope
   const disposition = response.headers.get("content-disposition") ?? "";
   return {
     blob: await response.blob(),
-    fileName: /filename="([^"]+)"/.exec(disposition)?.[1] ?? "tripscope-trips.csv",
+    fileName: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `tripscope-trips.${format}`,
     totalRows: Number(response.headers.get("x-total-rows") ?? 0),
     exportedRows: Number(response.headers.get("x-exported-rows") ?? 0),
     truncated: response.headers.get("x-truncated") === "true",
@@ -287,4 +299,141 @@ export function useSchemaReport() {
     staleTime: 60_000,
     retry: noRetryOnAuth,
   });
+}
+
+// ---- Phase 4: report center ----------------------------------------------------------------------------
+
+export function useReportTemplates() {
+  return useQuery({
+    queryKey: ["report-templates"],
+    queryFn: () => apiFetch<{ templates: ReportTemplate[]; formats: ReportFormat[] }>("/reports/templates"),
+    staleTime: Infinity,
+    retry: noRetryOnAuth,
+  });
+}
+
+const runActive = (run: ReportRun | undefined) => run !== undefined && ACTIVE.includes(run.status);
+
+export function useReports(scope: "all" | "mine" | "shared") {
+  return useQuery({
+    queryKey: ["reports", scope],
+    queryFn: () => apiFetch<{ reports: ReportSummary[] }>(`/reports${toQueryString({ scope })}`).then((r) => r.reports),
+    // Poll while any listed file is being generated so status chips update live.
+    refetchInterval: (query) =>
+      query.state.data?.some((r) => Object.values(r.latest_runs).some(runActive)) ? 2000 : 30_000,
+    placeholderData: keepPreviousData,
+    retry: noRetryOnAuth,
+  });
+}
+
+export function useReport(reportId: string) {
+  return useQuery({
+    queryKey: ["report", reportId],
+    queryFn: () => apiFetch<ReportDetail>(`/reports/${encodeURIComponent(reportId)}`),
+    refetchInterval: (query) => (query.state.data?.runs.some(runActive) ? 1500 : false),
+    retry: noRetryOnAuth,
+  });
+}
+
+/** The document a generated file would contain, rebuilt whenever the saved report changes. */
+export function useReportPreview(reportId: string, version: string | undefined) {
+  return useQuery({
+    queryKey: ["report-preview", reportId, version],
+    queryFn: () => apiFetch<ReportDocument>(`/reports/${encodeURIComponent(reportId)}/preview`),
+    enabled: Boolean(version),
+    placeholderData: keepPreviousData,
+    retry: noRetryOnAuth,
+  });
+}
+
+export interface ReportDraft {
+  template?: string;
+  title?: string;
+  filters?: DashboardFilters;
+  sections?: string[];
+  visibility?: ReportVisibility;
+}
+
+function reportBody(draft: ReportDraft): Record<string, unknown> {
+  return {
+    ...(draft.template ? { template: draft.template } : {}),
+    ...(draft.title !== undefined ? { title: draft.title } : {}),
+    ...(draft.filters ? { filters: { dataset_id: DATASET_ID, ...toApiBody(draft.filters) } } : {}),
+    ...(draft.sections ? { sections: draft.sections } : {}),
+    ...(draft.visibility ? { visibility: draft.visibility } : {}),
+  };
+}
+
+export function useCreateReport() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (draft: ReportDraft) =>
+      apiFetch<ReportDetail>("/reports", { method: "POST", body: JSON.stringify(reportBody(draft)) }),
+    onSuccess: (report) => {
+      client.setQueryData(["report", report.report_id], report);
+      void client.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
+}
+
+export function useUpdateReport(reportId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (draft: ReportDraft) =>
+      apiFetch<ReportDetail>(`/reports/${encodeURIComponent(reportId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(reportBody(draft)),
+      }),
+    onSuccess: (report) => {
+      client.setQueryData(["report", reportId], report);
+      void client.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
+}
+
+export function useDeleteReport() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (reportId: string) => apiFetch<null>(`/reports/${encodeURIComponent(reportId)}`, { method: "DELETE" }),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["reports"] }),
+  });
+}
+
+export function useGenerateReport(reportId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (format: ReportFormat) =>
+      apiFetch<ReportRun>(`/reports/${encodeURIComponent(reportId)}/generate`, {
+        method: "POST",
+        body: JSON.stringify({ format }),
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["report", reportId] });
+      void client.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
+}
+
+/** Fetch a generated report file and hand it to the browser to save. */
+export async function downloadReport(reportId: string, runId: string): Promise<string> {
+  const response = await fetch(
+    `/api/v1/reports/${encodeURIComponent(reportId)}/download${toQueryString({ run_id: runId })}`,
+    { credentials: "same-origin" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string; request_id?: string } } | null;
+    throw new ApiError(response.status, body?.error?.code ?? "http_error", body?.error?.message ?? "Download failed", body?.error?.request_id ?? null);
+  }
+  const fileName = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "tripscope-report";
+  saveBlob(await response.blob(), fileName);
+  return fileName;
+}
+
+export function saveBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
