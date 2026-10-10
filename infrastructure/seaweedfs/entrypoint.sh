@@ -7,8 +7,11 @@ set -eu
 : "${S3_ACCESS_KEY:?}" "${S3_SECRET_KEY:?}"
 : "${S3_CLICKHOUSE_ACCESS_KEY:?}" "${S3_CLICKHOUSE_SECRET_KEY:?}"
 
-CONFIG=/tmp/tripscope-s3.json
+# A fresh private directory per start: rewriting a file left in /tmp by a previous start fails after a
+# container restart (fs.protected_regular forbids re-creating another user's file in a sticky directory).
 umask 077
+CONFIG_DIR=$(mktemp -d /tmp/tripscope-s3.XXXXXX)
+CONFIG="$CONFIG_DIR/s3.json"
 cat > "$CONFIG" <<JSON
 {
   "identities": [
@@ -28,6 +31,6 @@ cat > "$CONFIG" <<JSON
   ]
 }
 JSON
-chown seaweed:seaweed "$CONFIG" 2>/dev/null || true
+chown -R seaweed:seaweed "$CONFIG_DIR" 2>/dev/null || true
 
 exec /entrypoint.sh "$@" -s3.config="$CONFIG"
