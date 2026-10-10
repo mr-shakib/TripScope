@@ -1,6 +1,6 @@
 # TripScope — Implementation Plan
 
-Status: living document. Updated at the end of every phase. **Phases 1–4 complete; Phase 5 (AI analyst) next.**
+Status: living document. Updated at the end of every phase. **Phases 1–5 complete; Phase 6 (hardening and presentation) next.**
 Spec: [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) (section references below use `§`).
 
 ---
@@ -340,17 +340,39 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - Reports are visible to their owner, administrators, or everyone (shared); finer grants (teams, datasets) are Phase 6.
 - File upload through the UI (FR-02) is still not built; sessions are stateless JWTs (revocation in Phase 6).
 
-### Phase 5 — AI analyst (local model or DeepSeek) — **in progress**
-- ☐ Provider adapter (OpenAI-compatible: DeepSeek API or local Ollama/vLLM/llama.cpp): native tool calls and a JSON-plan fallback, structured JSON output with one retry, timeouts and controlled errors, reasoning-effort setting, local-only switch; `disabled` mode keeps everything else working
-- ☐ Tool registry (§10.1): overview, time series, period comparison, top zones, breakdowns, distributions, data-quality summary, anomaly analysis (robust z-scores, "unusual is not fraud"), chart spec (allowlisted), report draft, zone lookup. Pydantic inputs, permission checks, limits, structured results with metadata, logged duration and status
-- ☐ Agent: grounded answers (direct answer, evidence, period and filters, metric definitions, caveats, follow-ups), clarifying questions, bounded tool rounds, tool results treated as data; numeric-claim verification on every answer
-- ☐ Conversations, messages and `ai_tool_runs` stored with a retention period; chat runs in the background with live steps; viewers only when an administrator enables it
-- ☐ No-key demo mode: deterministic answers to the spec's example questions through the same tools and evidence
-- ☐ Template 6 (custom AI-assisted report): AI outline from the section library, AI narrative over the report's own results with verified figures, then preview, edit and export through the report center
-- ☐ Web: AI analyst page (status, suggested questions, live tool steps, answers with evidence, verified figures, charts, follow-ups) and AI report drafting
-- ☐ Tests: provider adapter (mock transport), tool validation and permissions, verifier, agent loop and prompt-injection cases (scripted provider), integration through the API, Playwright (demo mode; live model optional)
-- ☐ Evaluation harness comparing providers: tool-selection and argument accuracy, grounding and unmatched-number rates, injection resistance, latency; results recorded for the local model (DeepSeek when a key is configured)
-- ☐ Docs updated; PR merged
+### Phase 5 — AI analyst (local model or DeepSeek) — **complete (2026-10-10)**
+- ☑ Provider adapter (OpenAI-compatible: DeepSeek API or local Ollama/vLLM/llama.cpp): native tool calls and a JSON-plan fallback, structured JSON output with one retry, timeouts and controlled errors, reasoning-effort setting, local-only switch; `disabled` mode keeps everything else working
+- ☑ Tool registry (§10.1): overview, time series (with change vs previous), period comparison, top zones, breakdowns (with shares; weekday vs weekend per day), distributions, data-quality summary, anomaly analysis (robust z-scores against same-weekday baselines, "unusual is not fraud"), chart spec (allowlisted), report draft, zone lookup. Pydantic inputs, permission checks, limits, structured results with metadata, logged duration and status
+- ☑ Agent: grounded answers (direct answer, evidence, period and filters, metric definitions, caveats, follow-ups), clarifying questions, bounded tool rounds, tool results treated as data; numeric-claim verification on every answer with one correction round
+- ☑ Conversations, messages and `ai_tool_runs` stored with a retention period (Alembic 0004); chat runs in the background with live steps; conversations private to their owner; viewers only when an administrator enables it
+- ☑ No-key demo mode: deterministic answers to the spec's example questions through the same tools and evidence
+- ☑ Template 6 (custom AI-assisted report): AI outline from a 15-section library, AI narrative over the report's own results with verified figures (unmatched sentences removed and listed), withheld when filters or sections change until redrafted; preview, edit and export through the report center
+- ☑ Web: AI analyst page (status, conversations, filter context, demo questions, live tool steps, answers with checked figures, charts, evidence, follow-ups) and AI report drafting
+- ☑ Tests: 175 backend unit (40 for the AI analyst: provider over a mock transport, tool allowlist and permissions, verifier, every agent path, prompt injection in data, demo grounding, evaluation scoring), 75 integration (AI status and role gates, demo answers equal the API, chat history and privacy, stale answers, retention, logged tool runs, template 6 outline/draft/files/staleness/redraft), 14 Vitest, 19 Playwright (17 always; 2 with a live model via `E2E_LLM=1`)
+- ☑ Evaluation harness comparing providers (tool selection, arguments, grounding, unmatched figures, clarification, injection resistance, latency); results for the local model in [ai-evaluation.md](ai-evaluation.md); DeepSeek pending a key
+- ☑ Docs updated (README, architecture, API reference, security, AI evaluation); PR merged
+
+**Verification record (Phase 5)**
+
+| Check | Result |
+|---|---|
+| Evaluation (15 cases × 3 runs, qwen3.5:4b on a 6 GB GPU) | Answered, right tool, right arguments, expected entities: 100%. Grounding 98.2% (55/56 figures); one answer in 12 had an unmatched (self-computed) share. Injection resistance 100%. Clarified the ambiguous question 0%. Median 14.3 s per question. Details: [ai-evaluation.md](ai-evaluation.md) |
+| Live UI (Playwright, `E2E_LLM=1`) | "Which pickup zones had the most trips in March 2025?" answered in 10.9 s with every figure matched and `get_top_zones` evidence; an AI-assisted report outlined, drafted (all figures matched) and exported as PDF in 26.5 s |
+| Template 6 (live) | Outline in 4.1–8.6 s; narrative 16/16 and 25/25 figures matched in two runs; hypotheses labelled; recommendations without figures |
+| Demo mode (no model) | Five demo questions answered from the same tools with all figures matched; Playwright compares them with the analytics API |
+| Safety | Unknown tools, extra arguments (`sql`), out-of-range IDs and invalid chart kinds rejected; instructions inside data stay in tool messages and trigger nothing; provider errors never carry the key; local-only switch refuses public hosts; viewers gated; conversations private (404 to admins) and purged after retention |
+| Robustness found by evaluation | Invented share tool → breakdown shares; cut-off JSON → salvaged; Ollama HTTP 500 on a malformed tool call → view fixed and tool-less retry |
+
+**Deviations and decisions**
+- No controlled SQL generation (§10.2 allows it later); every question goes through allowlisted tools.
+- Chat is answered in the background and polled, not streamed: robust behind the Next.js proxy and with slow local models.
+- Report narratives are drafted from the report's own KPIs and findings, not from fresh tool calls, so the text can only cite what the report shows.
+- DeepSeek is supported but not measured here (no key in this environment); the command is in ai-evaluation.md.
+
+**Known limitations carried forward**
+- The verifier checks that a figure is in the evidence, not that the sentence describes it correctly (e.g. a per-day average called a total).
+- The small local model does not ask clarifying questions and sometimes makes redundant tool calls (bounded by the tool budget); a larger model or DeepSeek may do better, to be measured with the same cases.
+- Answers take 10–30 s on the local GPU; there is no streaming of partial text.
 
 ### Phase 6 — Hardening and presentation
 - ☐ Dataset-level permissions, admin user management, audit views, rate limiting

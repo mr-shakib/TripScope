@@ -42,6 +42,11 @@ This page describes the components and the data flow as built.
 | API | Auth, datasets, schema, quality, analytics, explorer and exports, jobs, data sources, health/readiness | `api/` |
 | Report builder | Turns a template, title, filters and sections into one report document from the analytics service: KPIs with comparison, sections of charts and tables, rule-based summary and findings with evidence, dataset version, methodology, limitations | `reports/builder.py`, `reports/templates.py`, `reports/document.py` |
 | Report renderers | The document as PDF (ReportLab, embedded Geist font), XLSX (XlsxWriter) and CSV; also XLSX trip extracts | `reports/render_pdf.py`, `reports/render_xlsx.py`, `reports/render_csv.py` |
+| AI provider | OpenAI-compatible adapter (DeepSeek API or a local Ollama/vLLM/llama.cpp server): tool calls or JSON plans, retries, timeouts, local-only switch | `ai/provider.py` |
+| AI tools | Eleven allowlisted tools over the analytics service with strict inputs, bounded aggregate results, compact model views and evidence metadata | `ai/tools.py` |
+| AI agent and verifier | The tool loop, structured answers, clarifying questions, and matching of every figure against the tool results | `ai/agent.py`, `ai/verify.py` |
+| AI service | Conversations, background answering with live steps, `ai_tool_runs`, retention, demo answers, AI report outline and narrative drafting | `ai/service.py`, `ai/demo.py`, `reports/narrative.py` |
+| AI evaluation | Fixed questions scored for tool choice, arguments, grounding, injection resistance and latency per provider | `ai/evaluation.py`, `evals/ai_cases.yaml` |
 | Report service and worker | Report permissions, the report-run queue (claim, heartbeat, stale detection) and file generation into the lake | `reports/service.py`, `reports/worker.py` |
 | Web | Next.js App Router; Overview, Dashboards, Explore data, Reports (editor with live preview), Data sources, Processing jobs, Data quality. Filters and the active tab live in the URL | `frontend/src/` |
 
@@ -117,11 +122,32 @@ lake. Every number in a file therefore equals what the API returned for the same
 (published run IDs and a short hash) printed on each file shows which data it read. Downloads go through the API,
 which checks permissions, verifies the stored sha256 and audits the download.
 
+## AI analyst
+
+```text
+ question ─► POST /ai/chat (stored, 202) ─► thread pool: Agent
+                                              │  system prompt (rules, coverage, dashboard filters as context)
+                                              ▼
+                     model (local or DeepSeek) ⇄ allowlisted tools ─► analytics service ─► ClickHouse (reader)
+                                              │      each tool run → ai_tool_runs (arguments, status, result, meta)
+                                              ▼
+                     JSON answer ─► verifier: every figure vs the tool results ─► one correction round if needed
+                                              ▼
+              answer + caveats + follow-ups + chart + evidence ─► ai_messages ─► UI polls the conversation
+```
+
+The model sees compact text views of results (prompts fit an 8k-token window); the UI gets the full bounded
+results, so evidence, charts and metric definitions never depend on what the model wrote. Template 6 reports use
+the same provider twice: once to choose sections from a fixed library, once to draft sentences from the report's
+own KPIs and findings, whose figures are verified and whose evidence is copied from the cited KPI or finding.
+
 ## Deployment
 
 `compose.yaml` runs PostgreSQL 16, ClickHouse 25.8 and SeaweedFS 4.48 by default. Profile `app` adds
 `db-migrate`, `api`, `worker` (Spark image, OpenJDK 21), `report-worker` (API image, no JVM) and `web` (Next.js
-standalone server on :8080, which rewrites `/api` to the API container). Profile `pipeline` adds a one-off Spark runner. All ports bind to
+standalone server on :8080, which rewrites `/api` to the API container). Only the API receives the `LLM_*`
+settings; it can reach a model server on the host as `host.docker.internal` (the server must listen beyond
+loopback, e.g. `OLLAMA_HOST=0.0.0.0`), or an external provider such as DeepSeek. Profile `pipeline` adds a one-off Spark runner. All ports bind to
 `127.0.0.1`.
 
 MinIO was the spec's suggested store, but its images can no longer be pulled from Docker Hub or quay.io

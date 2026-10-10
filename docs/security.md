@@ -1,6 +1,6 @@
 # Security
 
-Scope: Phases 1–4. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
+Scope: Phases 1–5. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
 
 ## Authentication and sessions
 
@@ -27,6 +27,8 @@ Scope: Phases 1–4. Items marked *planned* are tracked in the [implementation p
 | `GET /reports`, report detail, preview, download (reports the caller may see) | ✓ all | ✓ own + shared | ✓ shared |
 | `POST /reports`, `…/generate` | ✓ | ✓ (generate: any report they may see) | ✗ (403) |
 | `PATCH`, `DELETE /reports/{id}` | ✓ | ✓ own | ✗ (403) |
+| `/ai/chat`, `/ai/conversations/*` (own conversations only) | ✓ | ✓ | only with `AI_ALLOW_VIEWERS=true` |
+| `/ai/report-outline`, `/ai/report-draft`, `/ai/reports/{id}/redraft` | ✓ | ✓ (redraft: own) | ✗ (403) |
 | `GET /ingestion-jobs`, `/processing-runs/*/logs`, `/data-sources` | ✓ | ✓ | ✗ (403) |
 | `POST /ingestion-jobs`, `…/retry`, `…/cancel` | ✓ | ✗ (403) | ✗ (403) |
 
@@ -68,6 +70,34 @@ dataset; per-dataset grants are planned for Phase 6.
 - Report text from data (zone names, labels) is XML-escaped before ReportLab's markup parser sees it; tooltips in
   the preview are HTML-escaped like every other chart.
 - The bundled Geist fonts are SIL Open Font License 1.1 (licence shipped next to them).
+
+## AI analyst
+
+- **What the model can reach.** Eleven allowlisted tools over the analytics service, nothing else: no SQL, no
+  code, no shell, no files, no trip rows (tools return bounded aggregates only), and the read-only, limit-bound
+  ClickHouse user. Tool inputs are strict Pydantic models (`extra="forbid"`: dates, zone IDs, known metrics and
+  dimensions); an unknown tool, malformed JSON or an invalid argument comes back to the model as an error and is
+  logged. Calls per question are capped (`AI_MAX_TOOL_CALLS`), repeated calls are not re-run, and a call that
+  keeps failing ends tool use for that question. The only tool that writes, `create_report_draft`, saves a
+  private report for analysts and admins; it never exports, shares or sends anything, and its result says so.
+- **Prompt injection.** Questions are plain text and never become queries. Text from data (zone names) reaches the
+  model only inside tool messages, and the system prompt says tool results are data, not instructions; a unit test
+  puts an instruction in a zone name and checks that it stays in a tool message and triggers nothing. The
+  evaluation suite includes injection cases (reveal the prompt, run SQL, claim a report was emailed).
+- **Numbers are verified.** Every figure in an answer is matched against the tool results; unmatched figures are
+  shown as such (chat) or removed (report narratives). Filters, periods and metric definitions shown as evidence
+  come from the tool runs, not from model text.
+- **Data leaving the machine.** Only the system prompt, the conversation's questions and answers, and compact
+  aggregate tool views are sent to the provider. `LLM_LOCAL_ONLY=true` refuses any provider whose host does not
+  resolve to loopback or a private network, so nothing leaves the machine or LAN. The status endpoint and the UI
+  say whether the configured model is local or external.
+- **Keys.** `LLM_API_KEY` is a `SecretStr`, sent only as a bearer header to the configured base URL, never logged
+  or returned; provider errors are reduced to short messages without it (unit-tested). The report worker
+  container runs with `LLM_PROVIDER=disabled` and no key.
+- **Privacy and retention.** Conversations are visible only to their owner (404 for anyone else, admins
+  included) and are deleted after `AI_RETENTION_DAYS` (default 30). Every tool call is logged in `ai_tool_runs`
+  (tool, validated arguments, status, duration, result metadata); AI report drafting is audited
+  (`report.ai_drafted`).
 
 ## Exports
 
