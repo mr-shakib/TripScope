@@ -20,7 +20,7 @@ from tripscope.analytics.filters import (
 from tripscope.analytics.metrics import METRICS
 from tripscope.api.security import AuthenticatedUser
 from tripscope.core.errors import NotFoundError
-from tripscope.pipeline.zone_geometry import GEOMETRY_KEY
+from tripscope.pipeline.lake import GEOMETRY_KEY
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
