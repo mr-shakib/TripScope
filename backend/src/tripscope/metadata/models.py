@@ -267,6 +267,9 @@ class Report(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    # Template 6: the AI-drafted narrative and the definition it was drafted for (see reports/narrative.py).
+    narrative: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
     creator: Mapped[User] = relationship()
     runs: Mapped[list[ReportRun]] = relationship(
         back_populates="report", order_by="ReportRun.created_at.desc()", cascade="all, delete-orphan"
@@ -317,3 +320,70 @@ class ReportRun(Base):
             postgresql_where=text("status IN ('queued', 'running')"),
         ),
     )
+
+
+class AIConversation(Base):
+    """A user's conversation with the AI analyst, deleted with its messages after AI_RETENTION_DAYS."""
+
+    __tablename__ = "ai_conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+    messages: Mapped[list[AIMessage]] = relationship(
+        back_populates="conversation", order_by="AIMessage.created_at", cascade="all, delete-orphan"
+    )
+
+
+class AIMessage(Base):
+    """A question or an answer. Answers carry what the UI needs to show their evidence (`payload`)."""
+
+    __tablename__ = "ai_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ai_conversations.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    content: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16))  # sent | running | answered | clarification | failed
+    mode: Mapped[str] = mapped_column(String(16), default="llm")  # llm | demo
+    provider: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(128))
+    page_filters: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    conversation: Mapped[AIConversation] = relationship(back_populates="messages")
+    tool_runs: Mapped[list[AIToolRun]] = relationship(
+        order_by="AIToolRun.created_at", cascade="all, delete-orphan"
+    )
+
+
+class AIToolRun(Base):
+    """Spec §8.1: tool name, validated arguments, result metadata, duration and status for every tool call."""
+
+    __tablename__ = "ai_tool_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ai_messages.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    tool: Mapped[str] = mapped_column(String(64))
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(16))  # ok | error
+    duration_ms: Mapped[float] = mapped_column(Float)
+    error: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # the bounded aggregate result (evidence)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # period, filters, metric definitions, source
+    chart: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("ix_ai_tool_runs_tool_created", "tool", "created_at"),)

@@ -45,6 +45,20 @@ class ServiceUnavailableError(TripScopeError):
     code = "service_unavailable"
 
 
+class AIUnavailableError(TripScopeError):
+    """The AI analyst is disabled or its provider is not configured."""
+
+    status_code = 503
+    code = "ai_unavailable"
+
+
+class AIProviderError(TripScopeError):
+    """The language-model provider failed, timed out or returned something unusable. Never carries keys."""
+
+    status_code = 502
+    code = "ai_provider_failed"
+
+
 class QueryFailedError(TripScopeError):
     """An analytics query failed or exceeded a server-side limit. Never carries SQL or credentials."""
 

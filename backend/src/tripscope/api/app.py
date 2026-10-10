@@ -17,8 +17,10 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from tripscope.ai.provider import build_provider
+from tripscope.ai.service import AIAnalyst
 from tripscope.analytics.service import AnalyticsService
-from tripscope.api.routers import analytics, auth, datasets, explorer, health, jobs, reports, sources
+from tripscope.api.routers import ai, analytics, auth, datasets, explorer, health, jobs, reports, sources
 from tripscope.api.security import LoginThrottle
 from tripscope.core.errors import TripScopeError
 from tripscope.core.logging import configure_logging, request_id_var
@@ -79,6 +81,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session_factory=session_factory,
         database=settings.clickhouse_database,
         max_range_days=settings.analytics_max_range_days,
+    )
+    app.state.ai = AIAnalyst(
+        settings=settings,
+        analytics=app.state.analytics,
+        session_factory=session_factory,
+        provider=build_provider(settings),
     )
     app.state.object_store = lambda: ObjectStore.from_settings(settings)
     app.state.manifest = ManifestCache(settings.resolved_manifest_path)
@@ -163,6 +171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         jobs.router,
         sources.router,
         reports.router,
+        ai.router,
     ):
         app.include_router(router, prefix=API_PREFIX)
     return app
