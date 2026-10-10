@@ -72,6 +72,8 @@ they are reported as **unmapped**, never assigned a guessed name.
 | ADR-15 | **PostgreSQL-backed job queue + worker** (`SELECT … FOR UPDATE SKIP LOCKED`) instead of Celery/Redis. API creates `queued` jobs; a worker container claims, heartbeats and runs them; cancel = flag checked between stages plus Spark job cancellation; jobs on a dead worker are failed by heartbeat timeout. | One fewer service; job state already lives in PostgreSQL; spec allows a simpler worker first (§6.1). |
 | ADR-16 | **Pre-aggregates built explicitly per partition** from the verified staging data, then swapped with `REPLACE PARTITION` together with the fact table. Queries use an aggregate only when every requested filter is covered by its dimensions; results must equal raw queries (tested). | Materialized views do not fire on `REPLACE PARTITION`; explicit builds keep aggregates consistent with the published run. |
 | ADR-17 | **CSV sources are validated structurally before Spark** (header, consistent field count on every line, server-error payloads) and rejected if truncated. | A real NYC Open Data export in this workspace ends with a `{"error": true, "status": 500}` body after 1.82M rows (data stops 2023-01-20); publishing it would misstate coverage. |
+| ADR-18 | **One report document, three renderers.** A report is built once from the shared analytics service into a JSON document (period, filters, dataset version, summary, KPIs, sections of charts and tables, findings with evidence, methodology, limitations). The web preview, PDF (ReportLab, embedded Geist font, vector charts), XLSX (XlsxWriter) and CSV all render that document. Until Phase 5 the summary and findings are rule-based sentences filled from returned values. | FR-09: exports use the same filters as the on-screen report and tables are never written by hand or by an LLM. ReportLab needs no browser or system libraries, so the API image stays small; the preview mirrors the PDF's structure. |
+| ADR-19 | **Report runs queue in PostgreSQL and run on a separate report worker** (API image, no JVM), with heartbeats and stale detection as in ADR-15. Files go to the lake under `reports/`; downloads go through the API, which checks permissions and audits every download. | Report generation must not wait behind a 40-second Spark job, nor block an API process. |
 
 ### 2.1 Logical flow (Phase 1)
 
@@ -300,8 +302,16 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - The API image still carries pyarrow and boto3, which only the pipeline needs.
 - Dark theme not built yet.
 
-### Phase 4 — Exports and report center
-- ☐ CSV/XLSX (formula-injection safe, frozen panes, formats)/PDF; templates 1–5; async status; authorized downloads; report history
+### Phase 4 — Exports and report center — **in progress**
+- ☐ Report model: `reports` (template, title, filters, sections, visibility, owner) and `report_runs` (format; queued → running → completed | failed; requester, timings, dataset version, file key, size, sha256), Alembic 0003
+- ☐ Templates 1–5 (FR-09) from the shared analytics service: title and period; applied filters and dataset version (published run IDs); executive summary; KPI table (with previous-period comparison when a date range is set); charts and tables; key findings, each with its evidence (metric, values, period, filters, source table); methodology and limitations; generated-at and creator
+- ☐ Renderers from one document: PDF (title block, sections, tables, charts, page numbers, attribution, methodology, limitations), XLSX (summary, KPI, section and quality sheets; frozen headers; number and date formats; native charts; strings never become formulas), CSV (tidy table with documented columns, formula-injection protection)
+- ☐ Background generation on a report worker; heartbeat and stale detection; one active run per report and format; files in the lake
+- ☐ API: templates, list, create, get, update, preview, generate, download (authorized and audited); direct XLSX trip extracts on `POST /exports`
+- ☐ Permissions: private or shared reports; admins see all; analysts create and generate, and see their own and shared reports; viewers see and download shared reports only; another user's private report is a 404
+- ☐ Web: Reports page (templates, history), report editor with a live preview that mirrors the PDF, filters/sections/visibility, generate PDF/Excel/CSV with live status, downloads enabled only when complete; Excel option in the explorer
+- ☐ Tests: unit (document builder, findings, formatting, formula injection in CSV and XLSX, PDF and XLSX readable with pypdf/openpyxl); integration (all formats through the worker, numbers equal the analytics API, role matrix, audit, stale runs); Playwright (analyst creates, previews and exports an executive report; viewer downloads a shared report but cannot generate)
+- ☐ Docs updated; PR merged
 
 ### Phase 5 — AI analyst (local model or DeepSeek)
 - ☐ OpenAI-compatible provider adapter + disabled mode; tool registry (§10.1) over the shared analytics service
