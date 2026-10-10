@@ -12,7 +12,7 @@ export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   if (!PUBLIC_PATHS.has(pathname) && !request.cookies.has(SESSION_COOKIE)) {
     const login = new URL("/login", request.url);
-    if (pathname !== "/") login.searchParams.set("next", `${pathname}${search}`);
+    if (pathname !== "/" || search) login.searchParams.set("next", `${pathname}${search}`);
     return NextResponse.redirect(login);
   }
 
