@@ -46,7 +46,8 @@ Rules:
   (month) already shows month-over-month change; get_breakdown (weekday) already shows weekday vs weekend per
   day. Use find_zones only to turn a zone name from the question into an ID.
 - Describe, do not over-claim: correlation is not causation, and an unusual record is not evidence of fraud.
-- If the metric, period or filters are unclear, ask one short clarifying question instead of guessing.
+- Ask one short clarifying question instead of guessing when the question refers to something not stated
+  (such as "then" or "it") or the metric is unclear. Otherwise use all published data.
 - Only say a report was created if create_report_draft succeeded. Never say anything was exported or emailed.
 Codes: payment_type 1 card, 2 cash, 3 no charge, 4 dispute, 0 flex fare; weekday 1 Monday to 7 Sunday;
 hour 0-23 NYC local time. Dates are YYYY-MM-DD. Use find_zones to get zone IDs from names.
@@ -136,6 +137,7 @@ def parse_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+_ANSWER_FIELD = re.compile(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
 ASK_FOR_JSON = 'Reply with the JSON answer only: {"answer": "...", "caveats": [], "follow_ups": []}'
 
 
@@ -190,7 +192,7 @@ class Agent:
     def _chat(self, messages: list[dict[str, Any]], *, tools: bool, json_mode: bool = False) -> ChatResult:
         native = tools and self.provider.supports_tools
         result = self.provider.chat(
-            messages, tools=openai_tools() if native else None, json_mode=json_mode, max_tokens=900
+            messages, tools=openai_tools() if native else None, json_mode=json_mode, max_tokens=1500
         )
         self._calls += 1
         for key, value in result.usage.items():
@@ -359,7 +361,17 @@ class Agent:
             except ValidationError:
                 pass
         text = content.strip()
-        return FinalAnswer(answer=text) if text and not text.startswith("{") else None
+        if text and not text.startswith("{"):
+            return FinalAnswer(answer=text)
+        # Almost-JSON (cut off or slightly malformed): keep the answer string if it can be read.
+        found = _ANSWER_FIELD.search(text)
+        if found:
+            try:
+                answer = json.loads(f'"{found.group(1)}"')
+            except json.JSONDecodeError:
+                return None
+            return FinalAnswer(answer=answer) if answer.strip() else None
+        return None
 
     def _correct(
         self, messages: list[dict[str, Any]], final: FinalAnswer, checked: Verification

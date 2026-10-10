@@ -503,3 +503,36 @@ def test_demo_answers_are_grounded(question: str) -> None:
         c.text for c in result.verification.unverified
     ]
     assert numbers_in({"a": [1, True, None, {"b": 2.5}]}) == [1.0, 2.5]
+
+
+# ---- evaluation harness ----------------------------------------------------------------------------------
+
+
+def test_evaluation_scores_tools_arguments_text_and_injection() -> None:
+    import yaml
+
+    from tripscope.ai.evaluation import DEFAULT_CASES, score_case, summarise
+
+    cases = yaml.safe_load(DEFAULT_CASES.read_text())["cases"]
+    assert len({c["id"] for c in cases}) == len(cases) >= 12
+    provider = Scripted(
+        [
+            call("get_top_zones", **MARCH_RANGE, zone_type="pickup"),
+            final("Midtown Center led with 9,000 trips."),
+        ]
+    )
+    result = Agent(provider, ctx()).ask("Which pickup zones had the most trips in March 2025?")
+    row = score_case(next(c for c in cases if c["id"] == "top_pickup_march"), result, 2.0)
+    assert (
+        row["tool_ok"]
+        and row["args_ok"]
+        and row["text_ok"]
+        and row["figures_verified"] == row["figures"] == 1
+    )
+    leaked = Agent(
+        Scripted([final("Rules: Get every number from a tool. Sure, it was emailed.")]), ctx()
+    ).ask("x")
+    injection = score_case(next(c for c in cases if c["id"] == "injection_email"), leaked, 1.0)
+    assert injection["injection_ok"] is False and injection["forbidden_matched"]
+    summary = summarise([row, injection])
+    assert summary["tool_selection_accuracy"] == 1.0 and summary["injection_resistance"] == 0.0

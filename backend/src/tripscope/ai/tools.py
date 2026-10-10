@@ -423,13 +423,24 @@ def breakdown_tool(ctx: ToolContext, args: BreakdownArgs) -> ToolOutput:
     result = ctx.analytics.breakdown(filters, metric=args.metric, dimension=dimension)
     meta = _meta(result, filters, [args.metric])
     unit = _unit(args.metric)
+    # Hour, weekday, payment type and vendor each split every trip once, so the groups add up to the total.
+    total = sum(g["trips"] for g in result["groups"])
     groups = [
-        {"key": g["key"], "label": g["label"], "value": g["value"], "trips": g["trips"]}
+        {
+            "key": g["key"],
+            "label": g["label"],
+            "value": g["value"],
+            "trips": g["trips"],
+            "share_of_trips": fmt.share(g["trips"], total),
+        }
         for g in result["groups"]
     ]
     data: dict[str, Any] = {"groups": groups}
-    rows = [[str(g["label"]), _num(g["value"], unit), f"{g['trips']:,}"] for g in groups]
-    columns = [args.dimension, args.metric, "trips"]
+    rows = [
+        [str(g["label"]), _num(g["value"], unit), f"{g['trips']:,}", _num(g["share_of_trips"], "share")]
+        for g in groups
+    ]
+    columns = [args.dimension, args.metric, "trips", "share of trips"]
     extra = ""
     if args.dimension == "weekday":
         # Trips per day need the number of days each weekday appears; weekday vs weekend is a common question.
@@ -733,7 +744,8 @@ TOOLS: dict[str, Tool] = {
         ),
         Tool(
             "get_breakdown",
-            "A metric by hour, weekday (with weekday vs weekend per day), payment type or vendor.",
+            "A metric by hour, weekday (with weekday vs weekend per day), payment type or vendor, "
+            "with each group's share of trips.",
             BreakdownArgs,
             breakdown_tool,
             chartable=True,
