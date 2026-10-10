@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  ChartColumn,
   ChevronDown,
   Compass,
   Database,
@@ -14,7 +15,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
 import { type ReactNode, useEffect } from "react";
 
@@ -23,6 +24,7 @@ import { useDataset, useLogout, useMe } from "@/api/hooks";
 import type { Role } from "@/api/types";
 import { LoadingBlock } from "@/components/ui/states";
 import { cn } from "@/lib/cn";
+import { readFilters, writeFilters } from "@/lib/filters";
 import { formatDate, formatInteger } from "@/lib/format";
 
 interface NavItem {
@@ -31,14 +33,17 @@ interface NavItem {
   icon: typeof Activity;
   phase?: number;
   roles?: Role[];
+  /** Analytics pages share the global filters: links carry them along. */
+  keepsFilters?: boolean;
 }
 
 const NAV: { title: string; items: NavItem[] }[] = [
   {
     title: "Analyze",
     items: [
-      { href: "/", label: "Overview", icon: LayoutDashboard },
-      { href: "/explore", label: "Explore data", icon: Compass, phase: 3 },
+      { href: "/", label: "Overview", icon: LayoutDashboard, keepsFilters: true },
+      { href: "/dashboards", label: "Dashboards", icon: ChartColumn, keepsFilters: true },
+      { href: "/explore", label: "Explore data", icon: Compass, keepsFilters: true },
       { href: "/ai", label: "AI analyst", icon: Sparkles, phase: 5 },
       { href: "/reports", label: "Reports", icon: FileText, phase: 4 },
     ],
@@ -78,6 +83,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const logout = useLogout();
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Only the filter keys travel between pages (not e.g. ?tab= or ?job=).
+  const filterQuery = writeFilters(new URLSearchParams(), readFilters(new URLSearchParams(searchParams.toString()))).toString();
 
   const unauthenticated = me.error instanceof ApiError && me.error.status === 401;
   useEffect(() => {
@@ -106,7 +114,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     return (
                       <li key={item.href}>
                         <Link
-                          href={item.href}
+                          href={item.keepsFilters && filterQuery ? `${item.href}?${filterQuery}` : item.href}
                           aria-current={active ? "page" : undefined}
                           className={cn(
                             "group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13.5px] transition-colors",

@@ -1,6 +1,6 @@
 "use client";
 
-import { Info } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Info, Minus } from "lucide-react";
 
 import type { Kpi, MetricDefinition } from "@/api/types";
 import { Sparkline } from "@/components/charts/sparkline";
@@ -15,14 +15,19 @@ export function KpiCard({
   hero = false,
   trend,
   dimmed = false,
+  previous,
+  comparisonLabel,
 }: {
   definition: MetricDefinition;
   kpi: Kpi | undefined;
   hero?: boolean;
-  trend?: (number | null)[];
+  trend?: (number | null)[] | undefined;
   dimmed?: boolean;
+  previous?: number | null | undefined;
+  comparisonLabel?: string | undefined;
 }) {
   const value = kpi?.value ?? null;
+  const change = value !== null && previous ? (value - previous) / Math.abs(previous) : null;
   return (
     <section
       aria-label={definition.label}
@@ -75,6 +80,16 @@ export function KpiCard({
       >
         {formatValue(value, definition.unit, { exact: hero })}
       </p>
+      {change !== null && comparisonLabel ? (
+        <p className="relative mt-1.5 flex items-center gap-1 text-xs text-ink-2" data-testid={`delta-${definition.id}`}>
+          {Math.abs(change) < 0.0005 ? <Minus className="size-3.5" /> : change > 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+          <span className="tabular font-medium text-ink">
+            {change > 0 ? "+" : ""}
+            {(change * 100).toFixed(Math.abs(change) < 0.1 ? 1 : 0)}%
+          </span>
+          <span className="text-ink-muted">vs {comparisonLabel}</span>
+        </p>
+      ) : null}
       <div className="relative mt-auto pt-3">
         {trend ? <Sparkline values={trend} className={hero ? "h-14 w-full" : "h-9 w-full"} /> : null}
         <p className="mt-1.5 text-xs text-ink-muted">

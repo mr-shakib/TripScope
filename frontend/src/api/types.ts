@@ -11,6 +11,7 @@ export interface User {
 
 export type MetricId =
   | "total_trips"
+  | "avg_daily_trips"
   | "total_recorded_amount"
   | "avg_total_amount"
   | "avg_trip_distance"
@@ -66,6 +67,7 @@ export interface OverviewResponse {
   kpis: Record<MetricId, Kpi> | null;
   data_state: DataState;
   result_range?: { first_date: string; last_date: string; days_with_data: number };
+  comparison?: Comparison;
   meta: ResultMeta;
 }
 
@@ -87,9 +89,13 @@ export interface DashboardFilters {
   start_date?: string;
   end_date?: string;
   pickup_zone: number[];
+  dropoff_zone: number[];
   payment_type: number[];
+  vendor_id: number[];
   hour: number[];
   weekday: number[];
+  min_distance?: number;
+  max_distance?: number;
 }
 
 // ---- Phase 2 -------------------------------------------------------------------------------------------
@@ -251,3 +257,85 @@ export interface SchemaReport {
   }[];
   sources: { period: string; source_key: string; file_format: string; schema_version: string | null; column_count: number; num_rows: number | null }[];
 }
+
+// ---- Phase 3 -------------------------------------------------------------------------------------------
+
+export interface Comparison {
+  available: boolean;
+  start_date?: string;
+  end_date?: string;
+  days?: number;
+  kpis?: Record<MetricId, Kpi> | null;
+  reason?: string | null;
+}
+
+export interface MatrixResponse {
+  cells: { weekday: number; hour: number; value: number | null; trips: number }[];
+  data_state: DataState;
+  meta: ResultMeta;
+}
+
+export interface Flow {
+  pickup_zone: number;
+  dropoff_zone: number;
+  value: number | null;
+  trips: number;
+  pickup_label: string;
+  pickup_borough: string | null;
+  dropoff_label: string;
+  dropoff_borough: string | null;
+  same_zone: boolean;
+}
+
+export interface FlowsResponse {
+  flows: Flow[];
+  data_state: DataState;
+  meta: ResultMeta;
+}
+
+export interface DistributionResponse {
+  buckets: { start: number; end: number | null; trips: number; open_ended: boolean }[];
+  summary: {
+    counted_trips: number;
+    excluded_trips: number;
+    bucket_width: number;
+    cap: number;
+    median_bucket: { start: number; end: number | null } | null;
+    p90_bucket: { start: number; end: number | null } | null;
+    above_cap_trips: number;
+  };
+  data_state: DataState;
+  meta: ResultMeta & { metric: "trip_distance" | "total_amount" };
+}
+
+export interface ZoneFeatureCollection {
+  type: "FeatureCollection";
+  features: { type: "Feature"; id: number; properties: { location_id: number; zone: string; borough: string }; geometry: unknown }[];
+}
+
+export interface ExplorerField {
+  name: string;
+  origin: "source" | "derived";
+  type: string;
+  description: string;
+  source_columns: string[];
+  available_in: number | null;
+  periods: number | null;
+  unit: string | null;
+  codes: string | null;
+}
+
+export type ExplorerRow = Record<string, string | number | boolean | null | string[]>;
+
+export interface ExplorerRowsResponse {
+  rows: ExplorerRow[];
+  columns: string[];
+  total: number;
+  page: number;
+  page_size: number;
+  max_preview_rows: number;
+  data_state: DataState;
+  meta: ResultMeta;
+}
+
+export type QualityScope = "all" | "clean" | "flagged";

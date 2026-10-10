@@ -1,14 +1,44 @@
 "use client";
 
-import { BarChart, LineChart } from "echarts/charts";
-import { DataZoomComponent, GridComponent, MarkAreaComponent, TooltipComponent } from "echarts/components";
+import { BarChart, HeatmapChart, LineChart, MapChart } from "echarts/charts";
+import {
+  DataZoomComponent,
+  GridComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
+  TooltipComponent,
+  VisualMapComponent,
+} from "echarts/components";
 import * as echarts from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
 import { useEffect, useRef } from "react";
 
 import { cn } from "@/lib/cn";
 
-echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, DataZoomComponent, MarkAreaComponent, SVGRenderer]);
+echarts.use([
+  LineChart,
+  BarChart,
+  HeatmapChart,
+  MapChart,
+  GridComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
+  VisualMapComponent,
+  SVGRenderer,
+]);
+
+/** Register GeoJSON once per name (ECharts keeps a global registry). */
+const registered = new Set<string>();
+export function registerGeoJson(name: string, geojson: object): void {
+  if (registered.has(name)) return;
+  echarts.registerMap(name, geojson as Parameters<typeof echarts.registerMap>[1]);
+  registered.add(name);
+}
+
+/** Sequential one-hue ramp (validated dataviz blue, light → dark) for magnitude encodings. */
+export const SEQUENTIAL_BLUE = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
 
 export type EChartsOption = echarts.EChartsCoreOption;
 
@@ -66,7 +96,7 @@ export function EChart({
 }: {
   build: (theme: ChartTheme) => EChartsOption;
   deps: unknown[];
-  onClick?: (params: { dataIndex: number; name: string; value: unknown }) => void;
+  onClick?: (params: { dataIndex: number; name: string; value: unknown; data?: unknown }) => void;
   onDataZoom?: (range: { startIndex: number; endIndex: number }) => void;
   className?: string;
   ariaLabel: string;
@@ -85,7 +115,7 @@ export function EChart({
     const instance = echarts.init(container.current, undefined, { renderer: "svg" });
     chart.current = instance;
     instance.on("click", (params) => {
-      const p = params as { dataIndex: number; name: string; value: unknown };
+      const p = params as { dataIndex: number; name: string; value: unknown; data?: unknown };
       handlers.current.onClick?.(p);
     });
     instance.on("datazoom", () => {
