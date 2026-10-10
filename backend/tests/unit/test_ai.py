@@ -536,3 +536,17 @@ def test_evaluation_scores_tools_arguments_text_and_injection() -> None:
     assert injection["injection_ok"] is False and injection["forbidden_matched"]
     summary = summarise([row, injection])
     assert summary["tool_selection_accuracy"] == 1.0 and summary["injection_resistance"] == 0.0
+
+
+def test_a_provider_failure_mid_tool_round_falls_back_to_an_answer() -> None:
+    class FailsOnSecondTurn(Scripted):
+        def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> ChatResult:
+            if len(self.sent) == 1 and kwargs.get("tools"):
+                self.sent.append(messages)
+                raise AIProviderError("the language-model provider returned HTTP 500")
+            return super().chat(messages, **kwargs)
+
+    provider = FailsOnSecondTurn([call("get_overview_metrics", **MARCH_RANGE), final(f"{TOTAL:,} trips.")])
+    result = Agent(provider, ctx()).ask("How many trips?")
+    assert result.status == "answered" and result.verification.verified == 1
+    assert "Answer now in JSON" in provider.sent[-1][-1]["content"]

@@ -278,7 +278,18 @@ class Agent:
         turn = _Turn()
         for _ in range(self.max_tool_calls + 4):
             offer = turn.tools_allowed and len(runs) < self.max_tool_calls
-            reply = self._chat(self._trim(messages), tools=offer, json_mode=not self.provider.supports_tools)
+            try:
+                reply = self._chat(
+                    self._trim(messages), tools=offer, json_mode=not self.provider.supports_tools
+                )
+            except AIProviderError:
+                # Some servers fail while parsing a malformed tool call the model produced (Ollama answers
+                # HTTP 500). With results already in hand, ask once more without tools for the answer.
+                if not (offer and runs and turn.tools_allowed):
+                    raise
+                turn.tools_allowed = False
+                messages.append({"role": "user", "content": "Answer now in JSON with the results above."})
+                continue
             parsed = parse_json_object(reply.content)
             calls = self._calls_in(reply, parsed) if offer else []
             pseudo = next((c for c in calls if c.name in ANSWER_TOOL_NAMES), None)
