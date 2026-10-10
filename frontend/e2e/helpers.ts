@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 
 export const admin = { email: process.env.E2E_ADMIN_EMAIL ?? "", password: process.env.E2E_ADMIN_PASSWORD ?? "" };
 export const viewer = { email: process.env.E2E_VIEWER_EMAIL ?? "", password: process.env.E2E_VIEWER_PASSWORD ?? "" };
+export const analyst = { email: process.env.E2E_ANALYST_EMAIL ?? "", password: process.env.E2E_ANALYST_PASSWORD ?? "" };
 
 export interface Overview {
   kpis: Record<string, { value: number | null }>;

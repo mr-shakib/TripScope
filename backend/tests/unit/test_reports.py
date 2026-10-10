@@ -496,3 +496,11 @@ def test_chart_blocks_survive_every_renderer() -> None:
     render_pdf(doc)
     render_report_xlsx(doc)
     render_report_csv(doc)
+
+
+def test_api_template_ids_match_the_registry() -> None:
+    import typing
+
+    from tripscope.api.routers.reports import TemplateId
+
+    assert set(typing.get_args(TemplateId)) == set(TEMPLATES)
