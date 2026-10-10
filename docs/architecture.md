@@ -17,6 +17,9 @@ This page describes the components and the data flow as built.
                                    ▲                              REPLACE PARTITION ×5) ─► publish
                                    │ s3() named collection (read-only lake identity)        │
                                    └──────────── SeaweedFS lake: raw/ curated/ quarantine/ reference/ ◄─┘
+                                                                               reports/ ◄─┐
+ FastAPI ──POST /reports/{id}/generate──► PostgreSQL report_runs ──► report worker ─┘ (reader user: build the
+          ◄── GET …/download (authorized, sha256-checked, audited) ──────────────     document, render PDF/XLSX/CSV)
 ```
 
 ## Components
@@ -37,7 +40,10 @@ This page describes the components and the data flow as built.
 | Metadata | Users, datasets, sources, jobs, runs, quality metrics, published periods, audit events | `metadata/`, `migrations/` |
 | Analytics | Shared filter model, metric registry, query builder that routes each request to the cheapest table able to answer it, period comparison, distributions, explorer rows and CSV extracts, schema and quality reports | `analytics/` |
 | API | Auth, datasets, schema, quality, analytics, explorer and exports, jobs, data sources, health/readiness | `api/` |
-| Web | Next.js App Router; Overview, Dashboards, Explore data, Data sources, Processing jobs, Data quality. Filters and the active tab live in the URL | `frontend/src/` |
+| Report builder | Turns a template, title, filters and sections into one report document from the analytics service: KPIs with comparison, sections of charts and tables, rule-based summary and findings with evidence, dataset version, methodology, limitations | `reports/builder.py`, `reports/templates.py`, `reports/document.py` |
+| Report renderers | The document as PDF (ReportLab, embedded Geist font), XLSX (XlsxWriter) and CSV; also XLSX trip extracts | `reports/render_pdf.py`, `reports/render_xlsx.py`, `reports/render_csv.py` |
+| Report service and worker | Report permissions, the report-run queue (claim, heartbeat, stale detection) and file generation into the lake | `reports/service.py`, `reports/worker.py` |
+| Web | Next.js App Router; Overview, Dashboards, Explore data, Reports (editor with live preview), Data sources, Processing jobs, Data quality. Filters and the active tab live in the URL | `frontend/src/` |
 
 ## Lake layout
 
@@ -49,6 +55,8 @@ tripscope-lake/
   reference/taxi_zones/sha256=<hash>/taxi_zone_lookup.csv
   reference/taxi_zone_shapes/sha256=<hash>/taxi_zones.zip                         (TLC shapefile, pinned checksum)
   reference/taxi_zone_geometry/current.geojson                                   (built from it: 263 zones, WGS84)
+  reports/<report_id>/<run_id>/tripscope-<template>-<start>-<end>.pdf|xlsx|csv  (a generated file, sha256 in metadata)
+  reports/<report_id>/<run_id>/document.json                                    (the exact document it was rendered from)
 ```
 
 ## Idempotency and publication
@@ -98,11 +106,22 @@ Spark action and the runner between stages and right before the partition swap, 
 publishes. Jobs whose worker stops heartbeating for 2 minutes are failed by
 any live worker and can be retried.
 
+## Reports
+
+A report is a saved definition (template, title, filters, sections, visibility). The preview endpoint builds its
+document on request; generating a file queues a `report_runs` row that snapshots the definition, so later edits
+never change a file in progress. The report worker — a separate process from the Spark worker, using the API's
+read-only ClickHouse user — claims runs with `FOR UPDATE SKIP LOCKED`, heartbeats, builds the document through
+the same analytics service as the dashboard, renders the format and stores the file and its `document.json` in the
+lake. Every number in a file therefore equals what the API returned for the same filters, and the dataset version
+(published run IDs and a short hash) printed on each file shows which data it read. Downloads go through the API,
+which checks permissions, verifies the stored sha256 and audits the download.
+
 ## Deployment
 
 `compose.yaml` runs PostgreSQL 16, ClickHouse 25.8 and SeaweedFS 4.48 by default. Profile `app` adds
-`db-migrate`, `api`, `worker` (Spark image, OpenJDK 21) and `web` (Next.js standalone server on :8080, which
-rewrites `/api` to the API container). Profile `pipeline` adds a one-off Spark runner. All ports bind to
+`db-migrate`, `api`, `worker` (Spark image, OpenJDK 21), `report-worker` (API image, no JVM) and `web` (Next.js
+standalone server on :8080, which rewrites `/api` to the API container). Profile `pipeline` adds a one-off Spark runner. All ports bind to
 `127.0.0.1`.
 
 MinIO was the spec's suggested store, but its images can no longer be pulled from Docker Hub or quay.io
