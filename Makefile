@@ -4,7 +4,7 @@ SOURCE ?= yellow-2025-01
 BACKEND := cd backend &&
 FRONTEND := cd frontend &&
 
-.PHONY: help env up down reset migrate pipeline pipeline-docker aggregates user api worker web app \
+.PHONY: help env up down reset migrate pipeline pipeline-docker aggregates user api worker report-worker web app \
         test test-unit test-integration test-frontend e2e lint format
 
 help: ## Show available targets
@@ -45,10 +45,13 @@ api: ## Run the API with auto-reload on http://127.0.0.1:8000
 worker: ## Process jobs queued from the UI/API on the host (Ctrl+C finishes the current job)
 	$(BACKEND) uv run tripscope-pipeline worker
 
+report-worker: ## Generate report files queued from the UI/API on the host (Ctrl+C finishes the current file)
+	$(BACKEND) uv run tripscope-report-worker
+
 web: ## Run the Next.js dev server on http://127.0.0.1:3000 (rewrites /api to :8000)
 	$(FRONTEND) npm run dev
 
-app: ## Build and start API, worker and web containers on http://127.0.0.1:8080
+app: ## Build and start API, workers and web containers on http://127.0.0.1:8080
 	docker compose --profile app up -d --build --wait
 
 test: test-unit test-integration test-frontend ## Run all automated tests except e2e
