@@ -406,7 +406,11 @@ def top_zones_tool(ctx: ToolContext, args: TopZonesArgs) -> ToolOutput:
         for z in zones
     ]
     view = _header("get_top_zones", meta, f"({args.zone_type}, {args.metric})") + f"; total trips {total:,}\n"
-    view += _table(["rank", "zone", "borough", args.metric, "trips", "share of trips"], rows)
+    columns = ["rank", "zone", "borough", args.metric, "trips", "share of trips"]
+    if args.metric == "total_trips":  # the metric column would repeat the trips column
+        columns.pop(3)
+        rows = [row[:3] + row[4:] for row in rows]
+    view += _table(columns, rows)
     chart = {
         "type": "bar",
         "title": f"Top {args.zone_type} zones",
