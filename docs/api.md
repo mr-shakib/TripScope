@@ -60,7 +60,7 @@ run that snapshots the definition; the report worker renders it from the same do
 
 | Method | Path | Roles | Notes |
 |---|---|---|---|
-| GET | `/reports/templates` | any | templates with their KPIs and sections; formats `pdf`, `xlsx`, `csv` |
+| GET | `/reports/templates` | any | templates 1–6 with their KPIs and sections; formats `pdf`, `xlsx`, `csv` |
 | GET | `/reports?scope&limit` | any | reports the caller can see (`all`, `mine`, `shared`), newest first, with the latest run per format |
 | POST | `/reports` | admin, analyst | `{template, title?, filters?, sections?, visibility?}` → 201; title defaults to template and period; audited |
 | GET | `/reports/{id}` | can see | the report, its permissions and run history (status, requester, size, pages, sha256, dataset version) |
@@ -72,6 +72,27 @@ run that snapshots the definition; the report worker renders it from the same do
 
 A report the caller may not see answers 404, so private reports are not disclosed. Report CSV is one tidy table with
 the columns `section, block, row, field, label, value, unit`.
+
+## AI analyst
+The analyst answers only through allowlisted tools over the analytics service (no SQL, no trip rows). Admins and
+analysts may ask; viewers only when `AI_ALLOW_VIEWERS=true`. Conversations are private to their owner and deleted
+after `AI_RETENTION_DAYS`. With `LLM_PROVIDER=disabled`, demo questions still work (fixed answer rules, no model).
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/ai/status` | any | provider, model, local or external, whether the caller may chat, demo questions, suggestions |
+| POST | `/ai/chat` | admin, analyst (viewer if enabled) | `{message \| demo_id, conversation_id?, filters?}` → 202 `{conversation_id, message_id}`; answered in the background. `filters` are the dashboard filters offered as context. 503 when no model is configured (demo questions still work); 409 while the previous question is being answered |
+| GET | `/ai/conversations?limit` | as chat | the caller's conversations |
+| GET | `/ai/conversations/{id}` | owner | messages with status (`running`, `answered`, `clarification`, `failed`), answer, caveats, follow-ups, verification of every figure (`claims` with offsets), chart, model calls and latency, and each tool run (tool, validated arguments, status, duration, bounded result, period, filters, metric definitions, source table). Poll while the last message is `running` |
+| DELETE | `/ai/conversations/{id}` | owner | 204 |
+| POST | `/ai/report-outline` | admin, analyst | `{filters?, focus?}` → `{title, sections, rationale, library, model}` from the template-6 section library (validated, one retry) |
+| POST | `/ai/report-draft` | admin, analyst | `{title?, filters?, sections, focus?, visibility?}` → 202 `{report_id}`; the report exists at once and its narrative is drafted in the background (`narrative.status` on the report: `drafting`, `ready`, `stale`, `failed`) |
+| POST | `/ai/reports/{id}/redraft` | owner, admin | `{focus?}` → 202; drafts the narrative again for the saved filters and sections |
+
+Tools the model may call (spec §10.1): `get_overview_metrics`, `get_time_series`, `compare_periods`,
+`get_top_zones`, `get_breakdown`, `get_distribution`, `get_data_quality_summary`, `run_anomaly_analysis`,
+`create_chart_spec`, `create_report_draft` (saves a private report; never exports or sends), `find_zones`. Their
+inputs are strict schemas; invalid calls come back to the model as an error message.
 
 ## Ingestion and processing
 | Method | Path | Roles | Notes |
