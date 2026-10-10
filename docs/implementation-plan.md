@@ -74,6 +74,8 @@ they are reported as **unmapped**, never assigned a guessed name.
 | ADR-17 | **CSV sources are validated structurally before Spark** (header, consistent field count on every line, server-error payloads) and rejected if truncated. | A real NYC Open Data export in this workspace ends with a `{"error": true, "status": 500}` body after 1.82M rows (data stops 2023-01-20); publishing it would misstate coverage. |
 | ADR-18 | **One report document, three renderers.** A report is built once from the shared analytics service into a JSON document (period, filters, dataset version, summary, KPIs, sections of charts and tables, findings with evidence, methodology, limitations). The web preview, PDF (ReportLab, embedded Geist font, vector charts), XLSX (XlsxWriter) and CSV all render that document. Until Phase 5 the summary and findings are rule-based sentences filled from returned values. | FR-09: exports use the same filters as the on-screen report and tables are never written by hand or by an LLM. ReportLab needs no browser or system libraries, so the API image stays small; the preview mirrors the PDF's structure. |
 | ADR-19 | **Report runs queue in PostgreSQL and run on a separate report worker** (API image, no JVM), with heartbeats and stale detection as in ADR-15. Files go to the lake under `reports/`; downloads go through the API, which checks permissions and audits every download. | Report generation must not wait behind a 40-second Spark job, nor block an API process. |
+| ADR-20 | **The AI analyst only calls allowlisted tools over the shared analytics service** (§10.1). Tool inputs are strict Pydantic models (dates, zone IDs, known metrics and dimensions); outputs are bounded aggregates, never trip rows. The model sees a compact view of each result; the full result, filters, period, metric definitions and source table are kept as evidence for the UI. Filters, periods and definitions shown with an answer come from the tool runs, never from model text. | Grounding and safety by construction: the model cannot reach SQL, files or rows, and every number it can see has a recorded origin. Compact views keep prompts within small local context windows (8k tokens for the local model). |
+| ADR-21 | **Numbers are verified, not trusted.** Every figure in an answer or AI-drafted narrative is matched (at its written precision, including K/M and percentages, ratios and changes between returned values) against the tool results. Chat answers show which figures matched; report narratives retry once with feedback, then drop sentences whose figures do not match and say so. Chat runs in the background and the UI polls its steps; the provider is OpenAI-compatible (DeepSeek or a local server) with native tool calls or a JSON-plan fallback, and a local-only switch. | FR-11 step 6 and §10.3. Small local models do make arithmetic and recall mistakes; flagging or removing unmatched figures keeps reports honest. Polling survives proxies and slow local models better than one long request. |
 
 ### 2.1 Logical flow (Phase 1)
 
@@ -338,10 +340,17 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - Reports are visible to their owner, administrators, or everyone (shared); finer grants (teams, datasets) are Phase 6.
 - File upload through the UI (FR-02) is still not built; sessions are stateless JWTs (revocation in Phase 6).
 
-### Phase 5 — AI analyst (local model or DeepSeek)
-- ☐ OpenAI-compatible provider adapter + disabled mode; tool registry (§10.1) over the shared analytics service
-- ☐ Evidence-grounded answers, numeric-claim verification, report outline/draft (template 6), ai_tool_runs logging
-- ☐ Prompt-injection and tool-safety tests; evaluation set comparing providers
+### Phase 5 — AI analyst (local model or DeepSeek) — **in progress**
+- ☐ Provider adapter (OpenAI-compatible: DeepSeek API or local Ollama/vLLM/llama.cpp): native tool calls and a JSON-plan fallback, structured JSON output with one retry, timeouts and controlled errors, reasoning-effort setting, local-only switch; `disabled` mode keeps everything else working
+- ☐ Tool registry (§10.1): overview, time series, period comparison, top zones, breakdowns, distributions, data-quality summary, anomaly analysis (robust z-scores, "unusual is not fraud"), chart spec (allowlisted), report draft, zone lookup. Pydantic inputs, permission checks, limits, structured results with metadata, logged duration and status
+- ☐ Agent: grounded answers (direct answer, evidence, period and filters, metric definitions, caveats, follow-ups), clarifying questions, bounded tool rounds, tool results treated as data; numeric-claim verification on every answer
+- ☐ Conversations, messages and `ai_tool_runs` stored with a retention period; chat runs in the background with live steps; viewers only when an administrator enables it
+- ☐ No-key demo mode: deterministic answers to the spec's example questions through the same tools and evidence
+- ☐ Template 6 (custom AI-assisted report): AI outline from the section library, AI narrative over the report's own results with verified figures, then preview, edit and export through the report center
+- ☐ Web: AI analyst page (status, suggested questions, live tool steps, answers with evidence, verified figures, charts, follow-ups) and AI report drafting
+- ☐ Tests: provider adapter (mock transport), tool validation and permissions, verifier, agent loop and prompt-injection cases (scripted provider), integration through the API, Playwright (demo mode; live model optional)
+- ☐ Evaluation harness comparing providers: tool-selection and argument accuracy, grounding and unmatched-number rates, injection resistance, latency; results recorded for the local model (DeepSeek when a key is configured)
+- ☐ Docs updated; PR merged
 
 ### Phase 6 — Hardening and presentation
 - ☐ Dataset-level permissions, admin user management, audit views, rate limiting
