@@ -51,7 +51,27 @@ names the table that answered: the cheapest one whose declared filters, dimensio
 |---|---|---|---|
 | GET | `/explorer/fields` | any | field catalogue: type, description, source columns, availability by period, units and codes; sortable columns; export limit |
 | GET | `/explorer/rows` | any | shared filters + `sort`, `order`, `quality` (`all`, `clean`, `flagged`), `flag`, `page`, `page_size` (25/50/100). Returns the page, the total matching rows and the columns. The preview stops at the first 10,000 rows (422 beyond) |
-| POST | `/exports` | any | `{format: "csv", filters, scope: {sort, order, quality, flag?}, columns?, max_rows?}` → streamed CSV, at most `MAX_EXPORT_ROWS` (default 100,000). Headers `X-Total-Rows`, `X-Exported-Rows`, `X-Truncated`. Audited as `export.csv` |
+| POST | `/exports` | any | `{format: "csv" \| "xlsx", filters, scope: {sort, order, quality, flag?}, columns?, max_rows?}` → streamed CSV, or an XLSX workbook (Trips sheet with typed cells and a frozen header, About sheet with filters, row counts and attribution); at most `MAX_EXPORT_ROWS` (default 100,000). Headers `X-Total-Rows`, `X-Exported-Rows`, `X-Truncated`. Audited as `export.csv` / `export.xlsx` |
+
+## Reports
+Templates 1–5 (FR-09). A report stores a template, title, filters (the shared analytics filters), the enabled sections
+and its visibility (`private`: the owner and administrators; `shared`: every signed-in user). Generating a file queues a
+run that snapshots the definition; the report worker renders it from the same document as the preview.
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/reports/templates` | any | templates with their KPIs and sections; formats `pdf`, `xlsx`, `csv` |
+| GET | `/reports?scope&limit` | any | reports the caller can see (`all`, `mine`, `shared`), newest first, with the latest run per format |
+| POST | `/reports` | admin, analyst | `{template, title?, filters?, sections?, visibility?}` → 201; title defaults to template and period; audited |
+| GET | `/reports/{id}` | can see | the report, its permissions and run history (status, requester, size, pages, sha256, dataset version) |
+| PATCH | `/reports/{id}` | owner, admin | `{title?, filters?, sections?, visibility?}`; audited with the changed fields |
+| DELETE | `/reports/{id}` | owner, admin | removes the report, its runs and stored files (409 while a file is being generated); audited |
+| GET | `/reports/{id}/preview` | can see | the report document built now: period, filters, dataset version, summary, KPIs with comparison, sections (charts and tables with raw values and display text), findings with evidence, methodology, limitations. 422 when no trips match |
+| POST | `/reports/{id}/generate` | admin, analyst who can see it | `{format}` → 202 queued run; 409 if that format is already queued or running; audited |
+| GET | `/reports/{id}/download?run_id&format` | can see | the file of a completed run (or the newest completed one); 409 if the run is not finished; integrity-checked against its sha256 (`X-Report-SHA256`); audited as `report.downloaded` |
+
+A report the caller may not see answers 404, so private reports are not disclosed. Report CSV is one tidy table with
+the columns `section, block, row, field, label, value, unit`.
 
 ## Ingestion and processing
 | Method | Path | Roles | Notes |

@@ -1,6 +1,6 @@
 # TripScope — Implementation Plan
 
-Status: living document. Updated at the end of every phase. **Phases 1–3 complete; Phase 4 next.**
+Status: living document. Updated at the end of every phase. **Phases 1–4 complete; Phase 5 (AI analyst) next.**
 Spec: [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) (section references below use `§`).
 
 ---
@@ -302,16 +302,41 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - The API image still carries pyarrow and boto3, which only the pipeline needs.
 - Dark theme not built yet.
 
-### Phase 4 — Exports and report center — **in progress**
-- ☐ Report model: `reports` (template, title, filters, sections, visibility, owner) and `report_runs` (format; queued → running → completed | failed; requester, timings, dataset version, file key, size, sha256), Alembic 0003
-- ☐ Templates 1–5 (FR-09) from the shared analytics service: title and period; applied filters and dataset version (published run IDs); executive summary; KPI table (with previous-period comparison when a date range is set); charts and tables; key findings, each with its evidence (metric, values, period, filters, source table); methodology and limitations; generated-at and creator
-- ☐ Renderers from one document: PDF (title block, sections, tables, charts, page numbers, attribution, methodology, limitations), XLSX (summary, KPI, section and quality sheets; frozen headers; number and date formats; native charts; strings never become formulas), CSV (tidy table with documented columns, formula-injection protection)
-- ☐ Background generation on a report worker; heartbeat and stale detection; one active run per report and format; files in the lake
-- ☐ API: templates, list, create, get, update, preview, generate, download (authorized and audited); direct XLSX trip extracts on `POST /exports`
-- ☐ Permissions: private or shared reports; admins see all; analysts create and generate, and see their own and shared reports; viewers see and download shared reports only; another user's private report is a 404
-- ☐ Web: Reports page (templates, history), report editor with a live preview that mirrors the PDF, filters/sections/visibility, generate PDF/Excel/CSV with live status, downloads enabled only when complete; Excel option in the explorer
-- ☐ Tests: unit (document builder, findings, formatting, formula injection in CSV and XLSX, PDF and XLSX readable with pypdf/openpyxl); integration (all formats through the worker, numbers equal the analytics API, role matrix, audit, stale runs); Playwright (analyst creates, previews and exports an executive report; viewer downloads a shared report but cannot generate)
-- ☐ Docs updated; PR merged
+### Phase 4 — Exports and report center — **complete (2026-10-10)**
+- ☑ Report model: `reports` (template, title, filters, sections, visibility, owner) and `report_runs` (format; queued → running → completed | failed; requester, timings, snapshot of the definition, dataset version, file key, size, sha256, pages), Alembic 0003
+- ☑ Templates 1–5 (FR-09) from the shared analytics service: title and period; applied filters and dataset version (published run IDs); executive summary; KPI table with previous-period comparison when a date range is set; charts and tables; key findings, each with its evidence (source, values, source table, caveat); methodology and limitations; generated-at and creator. Template 6 arrives with the AI analyst (Phase 5)
+- ☑ Renderers from one document: PDF (ReportLab, embedded Geist font, title block, sections, vector charts, page numbers, attribution, methodology, limitations), XLSX (summary, one sheet per table or chart with native charts, findings, dataset version, methodology; frozen headers; number and date formats; strings never become formulas), CSV (one tidy table with documented columns and formula protection)
+- ☑ Background generation on a separate report worker (container and `make report-worker`): heartbeat, stale-run detection, one active run per report and format; files and their `document.json` stored in the lake
+- ☑ API: templates, list, create, get, update, delete, preview, generate, download (authorized, integrity-checked and audited); `POST /exports` adds XLSX trip extracts
+- ☑ Permissions: private or shared reports; admins see all; analysts create and generate, see their own and shared reports and edit their own; viewers see and download shared reports; another user's private report is a 404
+- ☑ Web: Reports page (templates, history with live status and downloads), report editor with a live preview that mirrors the PDF, filters/sections/visibility, exports disabled until changes are saved, downloads enabled only when complete; Excel option in the explorer
+- ☑ Tests: 133 backend unit, 69 integration, 14 Vitest, 15 Playwright e2e (dev server and container build)
+- ☑ Docs updated (README, architecture, API reference, security); PR merged
+
+**Verification record (Phase 4)**
+
+| Check | Result |
+|---|---|
+| Every template, six months, every format | 15 files through the report worker: 0.12–0.83 s each; PDFs 57–61 KB, 4–5 pages; previews 118–407 ms |
+| Numbers | Integration tests: preview KPIs equal `/analytics/overview` for every metric and excluded-row count; the weekday table sums to the KPI; the PDF text, the XLSX Summary cell and the CSV KPI row carry the same total |
+| Files are readable | pypdf extracts the title, "Page 1 of N", methodology, limitations and attribution and finds the embedded Geist font; openpyxl reads typed cells, frozen headers, number formats and native charts; CSV parses with the documented columns |
+| Formula injection | A zone named `=HYPERLINK(...)` stays a string cell in XLSX (never a formula), gains an apostrophe in CSV, and markup such as `<b>…</b>` prints literally in the PDF |
+| Snapshot | Editing a report after queueing a run leaves that file's title and sections as they were when it was requested |
+| Failures | A period with no trips fails the run with "no trips match…"; a run whose worker stopped heartbeating is failed and can be generated again; one active run per format (409 on a duplicate) |
+| Permissions | Viewer and a second analyst get 404 reading, previewing or downloading a private report (and the analyst on generating it); viewers get 403 on generate and edit, whatever the report; a second analyst can generate a shared report but not edit or delete it |
+| Audit | `report.created`, `report.updated`, `report.generate_requested`, `report.downloaded`, `report.deleted`, `export.csv`, `export.xlsx` recorded with filters, formats and row counts |
+| UI (Playwright, dev and containers) | Analyst creates an executive report for March, the preview KPI equals the API, PDF and Excel download with valid signatures (`%PDF-`, `PK`), history shows both; viewer downloads the shared PDF with no generate or edit controls; deletion; Excel extract from the explorer |
+
+**Deviations and decisions**
+- The executive summary and findings are fixed sentence rules over returned values until the AI analyst (Phase 5) can draft narrative; every finding still carries its evidence.
+- Report runs have no cancel: generation takes under a second; a stuck run is failed by heartbeat timeout.
+- Report CSV is one tidy table (section, block, row, field, label, value, unit) rather than several files, so a single download holds every table.
+- Previews and files are rebuilt from published data; the dataset version (run IDs and a short hash) on every file shows exactly which data it read.
+
+**Known limitations carried forward**
+- An XLSX trip extract of 100,000 rows takes about 10 s (4 s of it writing the workbook) against 2.3 s for CSV; very large extracts are better as CSV.
+- Reports are visible to their owner, administrators, or everyone (shared); finer grants (teams, datasets) are Phase 6.
+- File upload through the UI (FR-02) is still not built; sessions are stateless JWTs (revocation in Phase 6).
 
 ### Phase 5 — AI analyst (local model or DeepSeek)
 - ☐ OpenAI-compatible provider adapter + disabled mode; tool registry (§10.1) over the shared analytics service

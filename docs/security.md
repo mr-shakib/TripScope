@@ -1,6 +1,6 @@
 # Security
 
-Scope: Phases 1–3. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
+Scope: Phases 1–4. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
 
 ## Authentication and sessions
 
@@ -24,6 +24,9 @@ Scope: Phases 1–3. Items marked *planned* are tracked in the [implementation p
 |---|---|---|---|
 | `/analytics/*`, `/datasets/*` (incl. schema, quality) | ✓ | ✓ | ✓ |
 | `/explorer/*`, `POST /exports` (published rows only, bounded) | ✓ | ✓ | ✓ |
+| `GET /reports`, report detail, preview, download (reports the caller may see) | ✓ all | ✓ own + shared | ✓ shared |
+| `POST /reports`, `…/generate` | ✓ | ✓ (generate: any report they may see) | ✗ (403) |
+| `PATCH`, `DELETE /reports/{id}` | ✓ | ✓ own | ✗ (403) |
 | `GET /ingestion-jobs`, `/processing-runs/*/logs`, `/data-sources` | ✓ | ✓ | ✗ (403) |
 | `POST /ingestion-jobs`, `…/retry`, `…/cancel` | ✓ | ✗ (403) | ✗ (403) |
 
@@ -49,18 +52,38 @@ dataset; per-dataset grants are planned for Phase 6.
   the query builder's allowlists by a unit test. The row preview allows page sizes 25/50/100 and stops at the
   first 10,000 rows; extracts stop at `MAX_EXPORT_ROWS` (default 100,000, at most 1,000,000) and are streamed.
 
+## Reports
+
+- A report the caller may not see (another user's private report) answers **404** on every route, so its
+  existence is not disclosed. Role checks run first: viewers get 403 on create, edit, generate and delete.
+- Report creation, edits (with the changed fields), generation requests (with format and filters), deletions and
+  every download are audited with the request ID and client IP.
+- Runs snapshot the definition at request time; a file always reflects what was requested, never a later edit.
+- Files are stored in the lake with their sha256 next to the `document.json` they were rendered from. Downloads
+  go through the API only (the lake is not reachable from the browser), are integrity-checked against the stored
+  sha256 and are refused if the object is missing or altered. File names are built from the template id and
+  dates, never from user input.
+- The report worker runs with the API's credentials: the read-only, bounded ClickHouse user and the app's lake
+  identity. It has no writer or admin secrets and no JVM.
+- Report text from data (zone names, labels) is XML-escaped before ReportLab's markup parser sees it; tooltips in
+  the preview are HTML-escaped like every other chart.
+- The bundled Geist fonts are SIL Open Font License 1.1 (licence shipped next to them).
+
 ## Exports
 
-CSV extracts use standard quoting. Text cells that a spreadsheet would evaluate (starting with `=`, `+`, `-`,
-`@`, tab or carriage return) get a leading apostrophe; numbers, dates and booleans are written as values, so
-negative amounts stay numeric. The response states how many rows matched and how many were exported
+CSV extracts and report CSVs use standard quoting. Text cells that a spreadsheet would evaluate (starting with
+`=`, `+`, `-`, `@`, tab or carriage return) get a leading apostrophe; numbers, dates and booleans are written as
+values, so negative amounts stay numeric. XLSX workbooks are written with `strings_to_formulas`,
+`strings_to_urls` and `strings_to_numbers` off and every text value through `write_string`, so text is always a
+plain string cell that spreadsheet software never evaluates (unit-tested with a `=HYPERLINK(…)` zone name). XLSX
+extracts are built in a private temporary directory that is removed after the response is sent. The response states how many rows matched and how many were exported
 (`X-Total-Rows`, `X-Exported-Rows`, `X-Truncated`) so a truncated extract is never mistaken for a complete one.
 
 ## Least privilege
 
 | Principal | Can | Cannot |
 |---|---|---|
-| ClickHouse `tripscope_reader` (API, future AI tools) | `SELECT` on TripScope databases | write, DDL, `url()`, `s3()`, `system.users`, raise its own limits. Server profile: `readonly=2`, `max_execution_time ≤ 30 s`, `max_result_rows ≤ 100k` (throw), `max_memory_usage ≤ 2 GB`, `max_threads ≤ 8` |
+| ClickHouse `tripscope_reader` (API, report worker, future AI tools) | `SELECT` on TripScope databases | write, DDL, `url()`, `s3()`, `system.users`, raise its own limits. Server profile: `readonly=2`, `max_execution_time ≤ 30 s`, `max_result_rows ≤ 100k` (throw), `max_memory_usage ≤ 2 GB`, `max_threads ≤ 8` |
 | ClickHouse `tripscope_writer` (pipeline) | DDL/DML on TripScope databases, read the lake via the named collection | read `system.parts`, manage users |
 | Lake identity `tripscope_app` | read/write TripScope buckets | other buckets, admin |
 | Lake identity `tripscope_clickhouse` | read/list TripScope buckets | write |
