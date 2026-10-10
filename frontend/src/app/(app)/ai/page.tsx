@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { Planned } from "@/components/layout/planned";
+import { LoadingBlock } from "@/components/ui/states";
+
+import { AIView } from "./ai-view";
 
 export const metadata: Metadata = { title: "AI analyst" };
 
-export default function Page() {
-  return <Planned title="AI analyst" phase={5} icon="Sparkles" summary="Ask questions in plain language. Answers come only from approved analytics tools, with the filters, definitions and values they used. Runs on a local model or DeepSeek." />;
+export default function AIPage() {
+  return (
+    <Suspense fallback={<LoadingBlock className="h-[60vh]" />}>
+      <AIView />
+    </Suspense>
+  );
 }

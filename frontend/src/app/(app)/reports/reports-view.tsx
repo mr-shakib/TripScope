@@ -3,11 +3,12 @@
 import { ArrowRight, Globe, Lock, Plus, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { ApiError } from "@/api/client";
-import { useCreateReport, useDataset, useMe, useReports, useReportTemplates } from "@/api/hooks";
-import type { ReportFormat, ReportSummary } from "@/api/types";
+import { useAIStatus, useCreateReport, useDataset, useMe, useReports, useReportTemplates } from "@/api/hooks";
+import type { DashboardFilters, ReportFormat, ReportSummary } from "@/api/types";
 import { FilterBar } from "@/components/filters/filter-bar";
 import { PageHeader } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Segmented } from "@/components/ui/segmented";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "@/components/ui/states";
 import { Pill } from "@/components/ui/status";
+import { AIDraftDrawer } from "@/components/reports/ai-draft";
 import { FileChip } from "@/components/reports/file-chip";
 import { useUrlFilters, useUrlParam } from "@/hooks/use-url-filters";
 import { cn } from "@/lib/cn";
@@ -24,6 +26,10 @@ import { formatDate, formatRelative } from "@/lib/format";
 const SCOPES = ["all", "mine", "shared"] as const;
 type Scope = (typeof SCOPES)[number];
 const FORMATS: ReportFormat[] = ["pdf", "xlsx", "csv"];
+
+function toApiBodyLike(filters: DashboardFilters): Record<string, unknown> {
+  return { start_date: filters.start_date, end_date: filters.end_date };
+}
 
 export function reportPeriod(filters: Record<string, unknown>): string {
   const f = fromApiBody(filters);
@@ -54,6 +60,8 @@ export function ReportsView() {
   const templates = useReportTemplates();
   const reports = useReports(scope);
   const create = useCreateReport();
+  const aiStatus = useAIStatus();
+  const [drafting, setDrafting] = useState(false);
   const router = useRouter();
 
   const start = (template: string) =>
@@ -88,7 +96,7 @@ export function ReportsView() {
               <ErrorBlock error={templates.error} className="h-40 sm:col-span-2 xl:col-span-3" />
             ) : (
               <>
-                {templates.data.templates.map((t) => (
+                {templates.data.templates.filter((t) => t.id !== "custom_ai").map((t) => (
                   <button
                     key={t.id}
                     type="button"
@@ -110,21 +118,41 @@ export function ReportsView() {
                     </span>
                   </button>
                 ))}
-                <div className="flex flex-col rounded-xl border border-dashed border-line-strong p-4 text-left opacity-80">
+                <button
+                  type="button"
+                  data-testid="template-custom_ai"
+                  disabled={!aiStatus.data?.enabled}
+                  onClick={() => setDrafting(true)}
+                  className="group flex flex-col rounded-xl border border-dashed border-accent/40 bg-accent-soft/40 p-4 text-left transition-all hover:-translate-y-px hover:border-accent hover:shadow-card disabled:translate-y-0 disabled:border-line-strong disabled:bg-surface disabled:opacity-80"
+                >
                   <span className="flex items-center gap-2">
-                    <span className="grid size-6 place-items-center rounded-md bg-surface-3 text-ink-muted">
+                    <span className="grid size-6 place-items-center rounded-md bg-accent text-white">
                       <Sparkles className="size-3.5" />
                     </span>
-                    <span className="text-[14px] font-semibold text-ink-2">Custom AI-assisted report</span>
+                    <span className="text-[14px] font-semibold text-ink">Custom AI-assisted report</span>
                   </span>
-                  <span className="mt-2 text-[12.5px] leading-relaxed text-ink-muted">
-                    Template 6 arrives with the AI analyst (Phase 5): an outline and narrative drafted from approved analytics results, with every number checked.
+                  <span className="mt-2 flex-1 text-[12.5px] leading-relaxed text-ink-2">
+                    {aiStatus.data?.enabled
+                      ? "Describe what the report should answer. The AI analyst proposes sections and drafts the summary from the report's own results; every figure is checked."
+                      : "Needs a language model (LLM_PROVIDER with a local model or DeepSeek). The other templates work without one."}
                   </span>
-                </div>
+                  <span className="mt-3 flex items-center justify-between text-[11.5px] text-ink-muted">
+                    Template 6{aiStatus.data?.model ? ` · ${aiStatus.data.model}` : ""}
+                    {aiStatus.data?.enabled ? (
+                      <span className="inline-flex items-center gap-1 font-medium text-accent-strong">
+                        <Sparkles className="size-3.5" /> Draft
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
               </>
             )}
           </div>
         </Card>
+      ) : null}
+
+      {author ? (
+        <AIDraftDrawer open={drafting} onOpenChange={setDrafting} filters={filters} periodLabel={reportPeriod(toApiBodyLike(filters))} />
       ) : null}
 
       <Card>

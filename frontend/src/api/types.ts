@@ -391,6 +391,19 @@ export interface ReportSummary {
   updated_at: string;
   permissions: { edit: boolean; generate: boolean };
   latest_runs: Partial<Record<ReportFormat, ReportRun>>;
+  /** Template 6 only: whether an AI narrative exists and is current for the saved filters and sections. */
+  narrative: NarrativeStatus | null;
+}
+
+export interface NarrativeStatus {
+  status: "none" | "drafting" | "ready" | "stale" | "failed";
+  model?: string | null;
+  generated_at?: string | null;
+  figures?: number;
+  figures_verified?: number;
+  dropped?: number;
+  error?: string | null;
+  focus?: string | null;
 }
 
 export interface ReportDetail extends ReportSummary {
@@ -477,4 +490,108 @@ export interface ReportDocument {
   findings: ReportFinding[];
   methodology: string[];
   limitations: string[];
+  recommendations: string[];
+  narrative: {
+    source: "ai" | "rules";
+    status: NarrativeStatus["status"];
+    model: string | null;
+    provider: string | null;
+    generated_at: string | null;
+    figures: number;
+    figures_verified: number;
+    dropped: string[];
+    error: string | null;
+  } | null;
+}
+
+// ---- Phase 5: AI analyst -------------------------------------------------------------------------------
+
+export interface AIStatus {
+  enabled: boolean;
+  provider: string;
+  model: string | null;
+  local: boolean;
+  reason: string | null;
+  can_chat: boolean;
+  tools: boolean;
+  max_tool_calls: number;
+  retention_days: number;
+  demo_questions: { id: string; text: string }[];
+  suggestions: string[];
+}
+
+export interface AIChart {
+  type: "line" | "bar" | "column";
+  title: string;
+  unit: Unit | "trips" | "share" | "count";
+  categories: string[];
+  series: { name: string; values: (number | null)[] }[];
+}
+
+export interface AIToolRun {
+  tool_run_id: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  status: "ok" | "error";
+  duration_ms: number;
+  error: string | null;
+  result: Record<string, unknown> | null;
+  meta: {
+    period: string;
+    filters: Record<string, unknown>;
+    metrics: MetricDefinition[];
+    source_table: string | null;
+    query_ms: number | null;
+  } | null;
+  chart: AIChart | null;
+}
+
+export interface AIClaim {
+  text: string;
+  value: number;
+  verified: boolean;
+  start: number;
+  end: number;
+}
+
+export interface AIMessage {
+  message_id: string;
+  role: "user" | "assistant";
+  content: string;
+  status: "sent" | "running" | "answered" | "clarification" | "failed";
+  mode: "llm" | "demo";
+  provider: string | null;
+  model: string | null;
+  page_filters: Record<string, unknown> | null;
+  payload: {
+    caveats?: string[];
+    follow_ups?: string[];
+    clarification?: string | null;
+    verification?: { total: number; verified: number; claims: AIClaim[] };
+    chart?: AIChart | null;
+    usage?: Record<string, number>;
+    latency_ms?: number;
+    model_calls?: number;
+    corrected?: boolean;
+    error?: string | null;
+  };
+  created_at: string;
+  finished_at: string | null;
+  tool_runs: AIToolRun[];
+}
+
+export interface AIConversation {
+  conversation_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: AIMessage[];
+}
+
+export interface AIOutline {
+  title: string;
+  sections: string[];
+  rationale: string;
+  library: { id: string; title: string; description: string }[];
+  model: string;
 }
