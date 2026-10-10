@@ -193,6 +193,7 @@ services:
     profiles: ["app"]
     image: tripscope-api:dev
     command: ["tripscope-report-worker"]
+    healthcheck: { disable: true }  # the image's check probes the API's HTTP port; this worker serves none
     environment: *api-env
     volumes:
       - ./manifests:/app/manifests:ro
