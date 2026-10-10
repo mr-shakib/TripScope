@@ -54,6 +54,24 @@ function Table({ block }: { block: ReportTableBlock }) {
   );
 }
 
+/** Mirrors `narrative_note` in backend/src/tripscope/reports/document.py (template 6 only). */
+function narrativeNote(doc: ReportDocument): string | null {
+  const info = doc.narrative;
+  if (!info) return null;
+  if (info.source === "ai") {
+    const removed = info.dropped.length ? `; ${info.dropped.length} sentence(s) without matching figures were removed` : "";
+    return `Summary and findings drafted by ${info.model ?? "the AI analyst"} from this report's results; ${info.figures_verified} of ${info.figures} figures checked against them${removed}.`;
+  }
+  const reason = {
+    none: "no AI narrative has been drafted yet",
+    drafting: "the AI narrative is still being drafted",
+    stale: "the AI narrative was drafted for other filters or sections",
+    failed: `drafting the AI narrative failed (${info.error ?? "unknown error"})`,
+    ready: "",
+  }[info.status];
+  return `Rule-based summary and findings: ${reason}.`;
+}
+
 function evidenceValue(value: string | number | boolean | null): string {
   if (typeof value === "number") return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
   return String(value);
@@ -97,6 +115,11 @@ export function ReportPreview({ doc, dimmed = false }: { doc: ReportDocument; di
 
       <H2>Executive summary</H2>
       <Bullets lines={doc.summary} />
+      {narrativeNote(doc) ? (
+        <p className="mt-2 text-[11px] text-ink-muted" data-testid="preview-narrative-note">
+          {narrativeNote(doc)}
+        </p>
+      ) : null}
 
       {doc.kpis.length ? (
         <>
@@ -169,6 +192,7 @@ export function ReportPreview({ doc, dimmed = false }: { doc: ReportDocument; di
               <li key={finding.id} className="text-[13px]">
                 <p className="text-ink">
                   <span className="font-semibold">{n + 1}.</span> {finding.statement}
+                  {finding.kind === "hypothesis" ? <em className="ml-1 text-ink-muted">(hypothesis)</em> : null}
                 </p>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-ink-muted">
                   Evidence: {finding.evidence.source}
@@ -181,6 +205,14 @@ export function ReportPreview({ doc, dimmed = false }: { doc: ReportDocument; di
               </li>
             ))}
           </ol>
+        </>
+      ) : null}
+
+      {doc.recommendations.length ? (
+        <>
+          <H2>Suggested next steps</H2>
+          <p className="text-[12px] text-ink-muted">Drafted by the AI analyst; not findings.</p>
+          <Bullets lines={doc.recommendations} />
         </>
       ) : null}
 

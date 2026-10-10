@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { ApiError } from "@/api/client";
 import {
+  useAIStatus,
   useDataset,
   useDeleteReport,
   useGenerateReport,
@@ -18,6 +19,7 @@ import {
 } from "@/api/hooks";
 import type { DashboardFilters, ReportDetail, ReportFormat, ReportRun, ReportVisibility } from "@/api/types";
 import { FilterBar } from "@/components/filters/filter-bar";
+import { NarrativeBanner } from "@/components/reports/ai-draft";
 import { FORMAT_ICONS, FORMAT_LABELS, useDownload } from "@/components/reports/file-chip";
 import { ReportPreview } from "@/components/reports/report-preview";
 import { Button } from "@/components/ui/button";
@@ -86,6 +88,7 @@ export function ReportView({ reportId }: { reportId: string }) {
   const report = useReport(reportId);
   const preview = useReportPreview(reportId, report.data?.updated_at);
   const templates = useReportTemplates();
+  const aiStatus = useAIStatus();
   const dataset = useDataset();
   const update = useUpdateReport(reportId);
   const generate = useGenerateReport(reportId);
@@ -283,6 +286,9 @@ export function ReportView({ reportId }: { reportId: string }) {
         </div>
 
         <div className="min-w-0">
+          {data.narrative ? (
+            <NarrativeBanner reportId={reportId} narrative={data.narrative} canEdit={canEdit} aiEnabled={Boolean(aiStatus.data?.enabled)} />
+          ) : null}
           {dirty ? (
             <div className="mb-3 rounded-lg border border-warning/40 bg-warning-soft px-4 py-2.5 text-[12.5px] text-warning-ink" role="status">
               Unsaved changes. The preview and exports use the saved report until you save.

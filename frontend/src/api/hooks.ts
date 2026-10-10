@@ -6,6 +6,9 @@ import { toApiBody, toApiParams } from "@/lib/filters";
 
 import { ApiError, apiFetch, toQueryString } from "./client";
 import type {
+  AIConversation,
+  AIOutline,
+  AIStatus,
   BreakdownResponse,
   Coverage,
   DistributionResponse,
@@ -330,7 +333,9 @@ export function useReport(reportId: string) {
   return useQuery({
     queryKey: ["report", reportId],
     queryFn: () => apiFetch<ReportDetail>(`/reports/${encodeURIComponent(reportId)}`),
-    refetchInterval: (query) => (query.state.data?.runs.some(runActive) ? 1500 : false),
+    // Poll while a file is being generated or an AI narrative is being drafted.
+    refetchInterval: (query) =>
+      query.state.data?.runs.some(runActive) || query.state.data?.narrative?.status === "drafting" ? 1500 : false,
     retry: noRetryOnAuth,
   });
 }
@@ -436,4 +441,111 @@ export function saveBlob(blob: Blob, fileName: string) {
   anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+// ---- Phase 5: AI analyst -------------------------------------------------------------------------------
+
+export function useAIStatus() {
+  return useQuery({
+    queryKey: ["ai-status"],
+    queryFn: () => apiFetch<AIStatus>("/ai/status"),
+    staleTime: 60_000,
+    retry: noRetryOnAuth,
+  });
+}
+
+export function useAIConversations(enabled: boolean) {
+  return useQuery({
+    queryKey: ["ai-conversations"],
+    queryFn: () =>
+      apiFetch<{ conversations: Omit<AIConversation, "messages">[] }>("/ai/conversations").then((r) => r.conversations),
+    enabled,
+    retry: noRetryOnAuth,
+  });
+}
+
+export function useAIConversation(conversationId: string | null) {
+  return useQuery({
+    queryKey: ["ai-conversation", conversationId],
+    queryFn: () => apiFetch<AIConversation>(`/ai/conversations/${encodeURIComponent(conversationId ?? "")}`),
+    enabled: Boolean(conversationId),
+    // Poll while the last answer is being worked on, so tool steps appear live.
+    refetchInterval: (query) => (query.state.data?.messages.at(-1)?.status === "running" ? 1000 : false),
+    retry: noRetryOnAuth,
+  });
+}
+
+export interface AskInput {
+  message?: string;
+  demo_id?: string;
+  conversation_id?: string | null;
+  filters?: DashboardFilters | null;
+}
+
+export function useAsk() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AskInput) =>
+      apiFetch<{ conversation_id: string; message_id: string }>("/ai/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          ...(input.message ? { message: input.message } : {}),
+          ...(input.demo_id ? { demo_id: input.demo_id } : {}),
+          ...(input.conversation_id ? { conversation_id: input.conversation_id } : {}),
+          ...(input.filters ? { filters: { dataset_id: DATASET_ID, ...toApiBody(input.filters) } } : {}),
+        }),
+      }),
+    onSuccess: (result) => {
+      void client.invalidateQueries({ queryKey: ["ai-conversation", result.conversation_id] });
+      void client.invalidateQueries({ queryKey: ["ai-conversations"] });
+    },
+  });
+}
+
+export function useDeleteConversation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (conversationId: string) =>
+      apiFetch<null>(`/ai/conversations/${encodeURIComponent(conversationId)}`, { method: "DELETE" }),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["ai-conversations"] }),
+  });
+}
+
+export function useReportOutline() {
+  return useMutation({
+    mutationFn: (input: { filters: DashboardFilters; focus: string }) =>
+      apiFetch<AIOutline>("/ai/report-outline", {
+        method: "POST",
+        body: JSON.stringify({ filters: { dataset_id: DATASET_ID, ...toApiBody(input.filters) }, focus: input.focus }),
+      }),
+  });
+}
+
+export function useDraftReport() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { title: string; filters: DashboardFilters; sections: string[]; focus: string }) =>
+      apiFetch<{ report_id: string }>("/ai/report-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          title: input.title,
+          filters: { dataset_id: DATASET_ID, ...toApiBody(input.filters) },
+          sections: input.sections,
+          focus: input.focus,
+        }),
+      }),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["reports"] }),
+  });
+}
+
+export function useRedraftReport(reportId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ report_id: string }>(`/ai/reports/${encodeURIComponent(reportId)}/redraft`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["report", reportId] }),
+  });
 }
