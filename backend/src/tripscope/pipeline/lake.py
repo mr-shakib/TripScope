@@ -37,6 +37,10 @@ def quarantine_prefix(run_id: str) -> str:
     return f"quarantine/run_id={uuid.UUID(run_id)}"
 
 
+# Built by the pipeline from the pinned TLC shapefile; served by the API without the geo libraries.
+GEOMETRY_KEY = "reference/taxi_zone_geometry/current.geojson"
+
+
 def reference_key(name: str, sha256: str, file_name: str) -> str:
     _check(re.compile(r"^[a-z_]{1,40}$"), name, "reference name")
     _check(re.compile(r"^[0-9a-f]{64}$"), sha256, "sha256")

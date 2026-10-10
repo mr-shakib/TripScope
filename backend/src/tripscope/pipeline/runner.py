@@ -198,10 +198,10 @@ def _acquire_reference_zones(deps: PipelineDeps, work: Path) -> tuple[list[Zone]
 
 def ensure_zone_geometry(deps: PipelineDeps, work: Path, *, force: bool = False) -> bool:
     """Build the map's zone GeoJSON into the lake if it is missing (or `force`). Returns True if built."""
-    from tripscope.pipeline.zone_geometry import GEOMETRY_KEY, build_zone_geojson, geojson_bytes
+    from tripscope.pipeline.zone_geometry import build_zone_geojson, geojson_bytes
 
     ref = deps.manifest.reference.get("taxi_zone_shapes")
-    if ref is None or (not force and deps.store.head(GEOMETRY_KEY) is not None):
+    if ref is None or (not force and deps.store.head(lake.GEOMETRY_KEY) is not None):
         return False
     file_name = Path(ref.uri).name
     local = deps.manifest.resolve_local_path(ref.uri) if ref.uri.startswith("file:") else None
@@ -221,7 +221,7 @@ def ensure_zone_geometry(deps: PipelineDeps, work: Path, *, force: bool = False)
     )
     collection = build_zone_geojson(acquired.local_path)
     deps.store.put_bytes(
-        GEOMETRY_KEY,
+        lake.GEOMETRY_KEY,
         geojson_bytes(collection),
         content_type="application/geo+json",
         metadata={"source-sha256": acquired.sha256, "zones": str(len(collection["features"]))},

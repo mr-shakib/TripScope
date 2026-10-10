@@ -25,7 +25,6 @@ from tripscope.core.errors import SourceValidationError
 EXPECTED_PROJECTION = "New_York_Long_Island"
 NYC_BOUNDS = (-74.30, 40.45, -73.65, 40.95)  # lon/lat with a small margin around the five boroughs
 MAX_MEMBER_BYTES = 25 * 1024 * 1024
-GEOMETRY_KEY = "reference/taxi_zone_geometry/current.geojson"
 
 
 def _member(archive: zipfile.ZipFile, suffix: str) -> bytes:
