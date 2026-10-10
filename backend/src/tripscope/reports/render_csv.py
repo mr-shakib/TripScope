@@ -20,7 +20,7 @@ from itertools import chain
 from typing import Any
 
 from tripscope.analytics.export import csv_stream
-from tripscope.reports.document import ChartBlock, ReportDocument, TableBlock
+from tripscope.reports.document import ChartBlock, ReportDocument, TableBlock, narrative_note
 
 COLUMNS = ["section", "block", "row", "field", "label", "value", "unit"]
 
@@ -46,6 +46,11 @@ def _frame_rows(doc: ReportDocument) -> Iterator[tuple[Any, ...]]:
     for n, period in enumerate(doc.dataset.periods, start=1):
         yield ("report", "dataset_version", n, "run_id", period.period, period.run_id, "text")
         yield ("report", "dataset_version", n, "row_count", period.period, period.row_count, "rows")
+    note = narrative_note(doc.narrative)
+    if note:
+        yield ("summary", "narrative", 1, "note", "", note, "text")
+    for n, line in enumerate(doc.recommendations, start=1):
+        yield ("summary", "recommendations", n, "text", "", line, "text")
     for n, line in enumerate(doc.summary, start=1):
         yield ("summary", "executive_summary", n, "text", "", line, "text")
     for n, kpi in enumerate(doc.kpis, start=1):
@@ -69,6 +74,7 @@ def _body_rows(doc: ReportDocument) -> Iterator[tuple[Any, ...]]:
                 yield from _chart_rows(section.id, block)
     for n, finding in enumerate(doc.findings, start=1):
         yield ("findings", "findings", n, "statement", finding.section, finding.statement, "text")
+        yield ("findings", "findings", n, "kind", finding.section, finding.kind, "text")
         yield ("findings", "findings", n, "evidence_source", finding.section, finding.evidence.source, "text")
         for key, value in finding.evidence.values.items():
             unit = "text" if isinstance(value, str) or value is None else "number"

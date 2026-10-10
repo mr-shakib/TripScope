@@ -164,3 +164,36 @@ TEMPLATES: dict[str, TemplateSpec] = {
         ),
     )
 }
+
+
+def _library() -> tuple[SectionSpec, ...]:
+    """Sections an AI-assisted report may combine: trip sections of templates 1–4 and the quality snapshot."""
+    seen: dict[str, SectionSpec] = {}
+    for template in TEMPLATES.values():
+        if template.id == "data_quality":
+            continue
+        for section in template.sections:
+            seen.setdefault(section.id, section)
+    when = ["trend", "hour", "weekday", "heatmap", "peak_slots"]
+    where = ["boroughs", "top_pickup_zones", "top_dropoff_zones", "top_flows"]
+    how_much = ["payment_mix", "distance_distribution", "amount_distribution", "amount_by_hour", "exclusions"]
+    order = [*when, *where, *how_much, "quality_snapshot"]
+    return tuple(seen[s] for s in order)  # payment_types is left out: payment_mix covers the same table
+
+
+TEMPLATES["custom_ai"] = TemplateSpec(
+    id="custom_ai",
+    number=6,
+    title="Custom AI-assisted report",
+    description="An outline proposed by the AI analyst from the section library, with an executive summary "
+    "and findings drafted from the report's own results; every figure is checked against them.",
+    kpis=(
+        "total_trips",
+        "avg_daily_trips",
+        "total_recorded_amount",
+        "avg_total_amount",
+        "avg_trip_distance",
+        "avg_trip_duration_minutes",
+    ),
+    sections=_library(),
+)

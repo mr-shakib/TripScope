@@ -21,7 +21,7 @@ from xlsxwriter.workbook import Workbook
 from xlsxwriter.worksheet import Worksheet
 
 from tripscope.reports import formatting as f
-from tripscope.reports.document import ChartBlock, Column, ReportDocument, TableBlock
+from tripscope.reports.document import ChartBlock, Column, ReportDocument, TableBlock, narrative_note
 
 SAFE_OPTIONS: dict[str, Any] = {
     "strings_to_formulas": False,
@@ -226,6 +226,16 @@ def _summary_sheet(book: Workbook, fx: _Formats, doc: ReportDocument, used: set[
         summary.merge_range(row, 0, row, 5, line, fx.wrap)
         summary.set_row(row, 15 * max(1, len(line) // 110 + 1))
         row += 1
+    note = narrative_note(doc.narrative)
+    if note:
+        summary.write_string(row, 0, note, fx.note)
+        row += 1
+    if doc.recommendations:
+        summary.write_string(row + 1, 0, "Suggested next steps (AI-drafted, not findings)", fx.heading)
+        row += 2
+        for line in doc.recommendations:
+            summary.merge_range(row, 0, row, 5, line, fx.wrap)
+            row += 1
     if not doc.kpis:
         return
     summary.write_string(row + 1, 0, "Key figures", fx.heading)
@@ -251,6 +261,7 @@ def _appendix_sheets(book: Workbook, fx: _Formats, doc: ReportDocument, used: se
             Column(key="number", label="#", unit="count"),
             Column(key="section", label="Section"),
             Column(key="statement", label="Finding"),
+            Column(key="kind", label="Kind"),
             Column(key="source", label="Evidence source"),
             Column(key="table", label="Source table"),
             Column(key="values", label="Values"),
@@ -261,6 +272,7 @@ def _appendix_sheets(book: Workbook, fx: _Formats, doc: ReportDocument, used: se
                 i,
                 fd.section,
                 fd.statement,
+                fd.kind,
                 fd.evidence.source,
                 fd.evidence.source_table,
                 "; ".join(f"{k} = {v}" for k, v in fd.evidence.values.items()),

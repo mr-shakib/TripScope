@@ -75,6 +75,7 @@ ignore = ["PLR0913", "PLR0917", "PLR2004", "S101", "PLR0911", "PLC0415", "N812"]
 "tests/unit/test_reports.py" = ["RUF001"]
 "tests/integration/test_reports.py" = ["RUF001"]
 "tests/unit/test_ai.py" = ["RUF001"]
+"tests/integration/test_ai.py" = ["RUF001"]
 
 [tool.mypy]
 python_version = "3.12"

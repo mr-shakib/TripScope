@@ -43,6 +43,7 @@ from tripscope.reports.document import (
     Series,
     TableBlock,
 )
+from tripscope.reports.narrative import apply_narrative, fingerprint
 from tripscope.reports.templates import TEMPLATES, SectionSpec, TemplateSpec
 
 DAILY_TREND_MAX_DAYS = 400
@@ -132,6 +133,7 @@ class ReportBuilder:
         sections: list[str],
         prepared_by: str,
         generated_at: datetime | None = None,
+        narrative: dict[str, Any] | None = None,
     ) -> ReportDocument:
         spec = TEMPLATES.get(template)
         if spec is None:
@@ -172,7 +174,7 @@ class ReportBuilder:
             data_last=result_range.get("last_date"),
         )
         dataset = self._dataset(ctx)
-        return ReportDocument(
+        doc = ReportDocument(
             template=spec.id,
             template_title=spec.title,
             title=title,
@@ -190,6 +192,8 @@ class ReportBuilder:
             methodology=self._methodology(ctx, kpis),
             limitations=self._limitations(ctx),
         )
+        # Template 6: a current, verified AI narrative replaces the rule-based summary and findings.
+        return apply_narrative(doc, narrative, fingerprint(spec.id, filters.applied(), sections))
 
     # ---- frame ---------------------------------------------------------------------------------------------
 

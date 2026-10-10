@@ -195,6 +195,7 @@ def enqueue_run(session: Session, report: Report, fmt: str, user: Actor) -> Repo
             "title": report.title,
             "filters": report.filters,
             "sections": report.sections,
+            "narrative": report.narrative,  # template 6: the AI text as it was when the file was requested
         },
     )
     session.add(run)
