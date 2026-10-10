@@ -84,6 +84,21 @@ class Settings(BaseSettings):
     analytics_max_range_days: int = Field(default=1100, ge=1, le=5000)
     max_export_rows: int = Field(default=100_000, ge=1, le=1_000_000)
 
+    # AI analyst (Phase 5, ADR-11/20/21). `disabled` keeps everything else working (demo questions only).
+    llm_provider: Literal["disabled", "openai_compatible"] = "disabled"
+    llm_base_url: str = ""  # e.g. https://api.deepseek.com/v1 or http://127.0.0.1:11434/v1 (Ollama)
+    llm_api_key: SecretStr = SecretStr("")
+    llm_model: str = ""
+    llm_timeout_seconds: int = Field(default=120, ge=5, le=600)
+    llm_reasoning_effort: str = ""  # sent only when set (e.g. "none" skips a local model's thinking phase)
+    llm_supports_tools: bool = (
+        True  # False: the model plans tool calls as JSON instead (servers without tools)
+    )
+    llm_local_only: bool = False  # refuse providers outside loopback/private networks
+    ai_allow_viewers: bool = False  # spec §3.1: viewers ask the AI only when an administrator enables it
+    ai_max_tool_calls: int = Field(default=6, ge=1, le=12)
+    ai_retention_days: int = Field(default=30, ge=1, le=3650)
+
     @field_validator("clickhouse_database")
     @classmethod
     def _identifier(cls, value: str) -> str:

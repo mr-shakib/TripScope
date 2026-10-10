@@ -71,8 +71,10 @@ ignore = ["PLR0913", "PLR0917", "PLR2004", "S101", "PLR0911", "PLC0415", "N812"]
 "src/tripscope/pipeline/aggregates.py" = ["S608"]
 # Report text uses typographic punctuation on purpose (en dashes in ranges, a true minus sign, ×).
 "src/tripscope/reports/**" = ["RUF001", "RUF002"]
+"src/tripscope/ai/**" = ["RUF001", "RUF002"]
 "tests/unit/test_reports.py" = ["RUF001"]
 "tests/integration/test_reports.py" = ["RUF001"]
+"tests/unit/test_ai.py" = ["RUF001"]
 
 [tool.mypy]
 python_version = "3.12"
