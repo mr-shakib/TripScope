@@ -103,8 +103,10 @@ class Worker:
             except Exception:
                 log.exception("heartbeat failed", extra={"job_id": str(job_id)})
                 continue
-            if cancel_requested and not cancel_event.is_set():
-                log.info("cancel requested", extra={"job_id": str(job_id)})
-                cancel_event.set()
+            if cancel_requested:
+                if not cancel_event.is_set():
+                    log.info("cancel requested", extra={"job_id": str(job_id)})
+                    cancel_event.set()
+                # Spark cancels only jobs running at that instant: repeat on every beat until the run stops.
                 if self.on_cancel is not None:
                     self.on_cancel()

@@ -15,6 +15,7 @@ import math
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -335,8 +336,14 @@ def read_source(spark: SparkSession, source_path: Path, ctx: TransformContext) -
 
 
 def transform_file(
-    spark: SparkSession, source_path: Path, ctx: TransformContext, output_dir: Path
+    spark: SparkSession,
+    source_path: Path,
+    ctx: TransformContext,
+    output_dir: Path,
+    cancel_check: Callable[[], None] | None = None,
 ) -> TransformResult:
+    """`cancel_check` runs before each Spark action and raises to stop the run between actions."""
+    checkpoint = cancel_check or (lambda: None)
     curated_dir = output_dir / "curated"
     quarantine_dir = output_dir / "quarantine"
 
@@ -345,7 +352,9 @@ def transform_file(
         StorageLevel.MEMORY_AND_DISK
     )
     try:
+        checkpoint()
         metrics = compute_metrics(annotated, ctx)
+        checkpoint()
         accepted_rows = int(metrics["accepted_rows"])
         files = max(1, math.ceil(accepted_rows / ROWS_PER_CURATED_FILE))
         accepted = annotated.filter(F.size("quarantine_reasons") == 0).select(*CURATED_COLUMNS)
@@ -355,6 +364,7 @@ def transform_file(
             .write.mode("overwrite")
             .parquet(str(curated_dir))
         )
+        checkpoint()
         quarantined = annotated.filter(F.size("quarantine_reasons") > 0).select(
             "taxi_type", *CANONICAL_NAMES, "quarantine_reasons", "_cast_failures", *LINEAGE_COLUMNS
         )
