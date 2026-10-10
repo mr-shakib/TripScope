@@ -178,7 +178,7 @@ class ExplorerQuery(AnalyticsFilters):
 
 class ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    format: Literal["csv"] = "csv"
+    format: Literal["csv", "xlsx"] = "csv"
     filters: AnalyticsFilters = Field(default_factory=AnalyticsFilters)
     scope: RowScope = Field(default_factory=RowScope)
     columns: list[ExplorerColumn] | None = Field(default=None, min_length=1, max_length=30)

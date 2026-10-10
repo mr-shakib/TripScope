@@ -182,7 +182,7 @@ def test_csv_extract_is_bounded_typed_and_audited(
     assert parsed[0] == ["pickup_datetime", "total_amount", "quality_flags"] and len(parsed) == 4
     assert Decimal(parsed[1][1]) >= Decimal(parsed[2][1]) >= Decimal(parsed[3][1])
     assert api.post("/api/v1/exports", json={**request, "columns": ["password"]}).status_code == 422
-    assert api.post("/api/v1/exports", json={**request, "format": "xlsx"}).status_code == 422
+    assert api.post("/api/v1/exports", json={**request, "format": "pdf"}).status_code == 422
     with env["factory"]() as session:
         audit = session.execute(
             text(

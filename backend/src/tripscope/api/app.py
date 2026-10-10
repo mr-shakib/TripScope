@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tripscope.analytics.service import AnalyticsService
-from tripscope.api.routers import analytics, auth, datasets, explorer, health, jobs, sources
+from tripscope.api.routers import analytics, auth, datasets, explorer, health, jobs, reports, sources
 from tripscope.api.security import LoginThrottle
 from tripscope.core.errors import TripScopeError
 from tripscope.core.logging import configure_logging, request_id_var
@@ -90,9 +90,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             CORSMiddleware,
             allow_origins=settings.cors_origins,
             allow_credentials=True,
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE"],
             allow_headers=["Content-Type", "X-Request-ID"],
-            expose_headers=["X-Total-Rows", "X-Exported-Rows", "X-Truncated"],
+            expose_headers=["X-Total-Rows", "X-Exported-Rows", "X-Truncated", "X-Report-SHA256"],
         )
 
     @app.middleware("http")
@@ -162,6 +162,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         explorer.router,
         jobs.router,
         sources.router,
+        reports.router,
     ):
         app.include_router(router, prefix=API_PREFIX)
     return app
