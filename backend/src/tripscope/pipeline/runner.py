@@ -369,7 +369,13 @@ class _SourceRun:
                     source_format=self.source.format,
                     timestamp_format=self.source.timestamp_format,
                 )
-                result = transform_file(self.deps.spark_factory(), acquired.local_path, ctx, self.run_dir)
+                result = transform_file(
+                    self.deps.spark_factory(),
+                    acquired.local_path,
+                    ctx,
+                    self.run_dir,
+                    cancel_check=self._check_cancelled,
+                )
                 self.result = result
             with self.recorder.stage("store_curated"):
                 store = self.deps.store
