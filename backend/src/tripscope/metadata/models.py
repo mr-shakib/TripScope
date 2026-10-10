@@ -296,7 +296,7 @@ class ReportRun(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     worker_id: Mapped[str | None] = mapped_column(String(128))
     error_summary: Mapped[str | None] = mapped_column(Text)
-    dataset_version: Mapped[list[Any] | None] = mapped_column(JSONB)  # [{period, run_id, row_count}]
+    dataset_version: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # {version_id, periods: [...]}
     object_key: Mapped[str | None] = mapped_column(Text)
     file_name: Mapped[str | None] = mapped_column(String(255))
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
