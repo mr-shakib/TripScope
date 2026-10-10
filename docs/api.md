@@ -26,15 +26,32 @@ Responses carry `meta` (applied filters, coverage, metric definitions, `source_t
 
 | Method | Path | Extra params | Notes |
 |---|---|---|---|
-| GET | `/analytics/overview` | — | 5 KPIs with excluded-row counts |
+| GET | `/analytics/metrics` | — | metric catalogue: label, unit, description, rows included, caveats |
+| GET | `/analytics/overview` | `compare` (`none`, `previous`) | 6 KPIs with excluded-row counts and the date range found; `compare=previous` adds the same KPIs for the equally long window just before the selection; without a start and end date, or when that window starts before published data, `comparison.available` is false with a `reason` |
 | GET | `/analytics/trips-over-time` | `metric`, `granularity` (`hour`≤62 days, `day`, `month`) | time series |
 | GET | `/analytics/trips-by-hour` | `metric` | 24 groups |
 | GET | `/analytics/trips-by-weekday` | `metric` | 7 groups, labelled Mon–Sun |
+| GET | `/analytics/hour-weekday` | `metric` | 168 cells (weekday × hour) |
+| GET | `/analytics/payment-types` | `metric` | groups labelled from the TLC data dictionary |
+| GET | `/analytics/vendors` | `metric` | groups labelled from the TLC data dictionary |
 | GET | `/analytics/top-pickup-zones` | `metric`, `limit` (1–50) | zone names from the TLC lookup; 264/265 labelled unmapped |
+| GET | `/analytics/top-dropoff-zones` | `metric`, `limit` (1–50) | as above, by drop-off zone |
+| GET | `/analytics/zone-totals` | `side` (`pickup`, `dropoff`), `metric`, `limit` (1–300) | every zone, for the map |
+| GET | `/analytics/top-flows` | `metric`, `limit` (1–50) | busiest pickup → drop-off pairs, with labels and boroughs |
+| GET | `/analytics/distribution` | `metric` (`trip_distance`, `total_amount`) | histogram of valid values (1-mile buckets to 50+, $5 buckets to $200+), median and p90 buckets, excluded and above-cap counts |
 | GET | `/analytics/zones` | — | TLC zone lookup |
+| GET | `/analytics/zones/geometry` | — | simplified WGS84 zone boundaries (`application/geo+json`, 263 features); 404 until built |
 
 `metric` ∈ `total_trips`, `total_recorded_amount`, `avg_total_amount`, `avg_trip_distance`,
-`avg_trip_duration_minutes` (definitions: [metric-definitions.md](metric-definitions.md)).
+`avg_trip_duration_minutes` (definitions: [metric-definitions.md](metric-definitions.md)). `meta.source_table`
+names the table that answered: the cheapest one whose declared filters, dimensions and metrics cover the request.
+
+## Data explorer
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/explorer/fields` | any | field catalogue: type, description, source columns, availability by period, units and codes; sortable columns; export limit |
+| GET | `/explorer/rows` | any | shared filters + `sort`, `order`, `quality` (`all`, `clean`, `flagged`), `flag`, `page`, `page_size` (25/50/100). Returns the page, the total matching rows and the columns. The preview stops at the first 10,000 rows (422 beyond) |
+| POST | `/exports` | any | `{format: "csv", filters, scope: {sort, order, quality, flag?}, columns?, max_rows?}` → streamed CSV, at most `MAX_EXPORT_ROWS` (default 100,000). Headers `X-Total-Rows`, `X-Exported-Rows`, `X-Truncated`. Audited as `export.csv` |
 
 ## Ingestion and processing
 | Method | Path | Roles | Notes |

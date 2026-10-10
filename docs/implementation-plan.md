@@ -1,6 +1,6 @@
 # TripScope — Implementation Plan
 
-Status: living document. Updated at the end of every phase. **Phases 1–2 complete; Phase 3 in progress.**
+Status: living document. Updated at the end of every phase. **Phases 1–3 complete; Phase 4 next.**
 Spec: [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) (section references below use `§`).
 
 ---
@@ -262,17 +262,43 @@ Legend: ☐ not started · ◐ in progress · ☑ done and verified by a run/tes
 - The login throttle is per process; sessions are stateless JWTs (revocation in Phase 6).
 - The API image still carries pyarrow and boto3, which only the pipeline needs.
 
-### Phase 3 — Dashboards, zone map and data explorer — **in progress**
-- ☐ Every FR-07 KPI: add trips per day; period-over-period comparison when a date range is selected
-- ☐ Every FR-07 chart: trip-distance and total-amount distributions (outliers capped and disclosed), payment types, top drop-off zones, pickup→drop-off flows, hour × weekday heatmap
-- ☐ Every FR-07 filter in the UI: drop-off zone, vendor, trip-distance range, vehicle type (single published type shown, not hidden)
-- ☐ Click-to-filter on every chart where meaningful (payment slice, distance bucket, heatmap cell, zone, flow)
-- ☐ Taxi-zone choropleth from the official TLC shapefile (reprojected EPSG:2263 → WGS84, simplified, stored in the lake); click a zone to filter
-- ☐ Source routing generalised: each table declares the filters, dimensions and metrics it can answer; the first that covers a request wins
-- ☐ Metric-definitions panel available from every analytics page
-- ☐ Data explorer (FR-08): field catalogue with types, descriptions and availability; bounded, paginated, sortable row preview with quality filters; applied filters and row count; CSV extract with row limit, formula-injection protection and audit
-- ☐ Tests: backend unit + integration for every new query path (aggregate vs raw equality), export safety; Vitest; Playwright for dashboards, map and explorer
-- ☐ Docs updated; PR merged
+### Phase 3 — Dashboards, zone map and data explorer — **complete (2026-10-10)**
+- ☑ Every FR-07 KPI: trips per day added; period-over-period comparison when a date range is selected
+- ☑ Every FR-07 chart: trip-distance and total-amount distributions (outliers capped and disclosed), payment types, vendors, top drop-off zones, pickup→drop-off pairs, hour × weekday heatmap
+- ☑ Every FR-07 filter in the UI: drop-off zone, vendor, trip-distance range, vehicle type (the single published type is shown, not hidden)
+- ☑ Click-to-filter on every chart where meaningful (payment bar, distance bucket, heatmap cell, zone, pair, weekday, hour)
+- ☑ Taxi-zone choropleth from the official TLC shapefile (EPSG:2263 → WGS84, simplified, stored in the lake); click a zone to filter
+- ☑ Source routing generalised: each table declares the filters, dimensions and metrics it can answer; the cheapest that covers a request wins
+- ☑ Metric-definitions drawer on every analytics page
+- ☑ Data explorer (FR-08): field catalogue with types, descriptions, source columns and availability; bounded, paginated, sortable row preview with quality scope and flag filter; applied filters and row count; CSV extract with row limit, formula-injection protection and audit
+- ☑ Tests: 101 backend unit, 61 integration (aggregate vs raw equality for every new query path, export safety, roles), 12 Vitest, 11 Playwright e2e (dev server and container build)
+- ☑ Docs updated (README, architecture, API reference, security); PR merged
+
+**Verification record (Phase 3)**
+
+| Check | Result |
+|---|---|
+| Zone map | Official shapefile (sha256 pinned) → 263 zones in WGS84, all inside the NYC bounding box; 317 KB GeoJSON, 80 KB gzipped, served from memory after the first request |
+| Routing (warm, six months) | Heatmap, payment types, vendors, pickup-zone totals 15–19 ms (`trips_hourly_agg`); drop-off totals 10–11 ms (`trips_dropoff_daily_agg`); distributions 7–8 ms (`fare_distance_buckets`); busiest pairs 238 ms and distance-filtered overview 116 ms (`taxi_trips`) |
+| Cold cache | The first distance-filtered overviews after a reboot took 9.4–9.8 s, reading 735 MiB from disk; once cached the same query took 116 ms. Recorded, not hidden: Phase 6 benchmarks will report cold and warm runs |
+| Comparison | March 2025 vs the previous 31 days (Jan 29 – Feb 28): the UI delta matches the API; without a date range the API explains why it cannot compare |
+| Drill-downs (Playwright) | After each of heatmap cell, payment bar, distance bucket and zone pair, the payment-type total equals the API's KPI for the URL's filters; the top pair's KPI equals its trip count in `top-flows` |
+| Explorer | 2025-01-06: 80,119 rows, preview page in 34 ms; flag filter, sort, paging and a CSV of every matching row match the API; extracts are audited (`export.csv`) with filters and row counts |
+| Cancel mid-Spark | 53 s → 5.2 s from request to `cancelled` during `spark_transform` (container worker); "nothing was published"; June still 4,322,709 trips |
+| Container build | All 11 Playwright tests pass against `:8080`. The run caught the API importing the geo libraries it does not install; fixed and covered by a unit test |
+
+**Deviations and decisions**
+- Vehicle type shows Yellow Taxi as a fixed, labelled filter; it becomes a picker when a second taxi type is published.
+- Distance filters, zone pairs, and drop-off-zone filters on views that need trip duration read `taxi_trips`: no aggregate covers them. They are fast once cached; the first queries after a restart are slow (see above).
+- The row preview stops at the first 10,000 rows of a query; larger needs go to the CSV extract (`MAX_EXPORT_ROWS`, default 100,000). XLSX and PDF are Phase 4.
+- Extracts are available to every role, as the spec allows viewers to "download permitted exports"; each one is audited.
+- Fixed along the way: SeaweedFS failed to start after a reboot (`/tmp` file owned by another user under `fs.protected_regular`); signed-out links to `/?filters` lost their filters at sign-in; two quick URL changes (switch tab, then reset) could overwrite each other, so URL state is now merged from the live location with native `history.replaceState`.
+
+**Known limitations carried forward**
+- File upload through the UI (FR-02 "uploaded file") is still not built; sources come from the manifest.
+- The login throttle is per process; sessions are stateless JWTs (revocation in Phase 6).
+- The API image still carries pyarrow and boto3, which only the pipeline needs.
+- Dark theme not built yet.
 
 ### Phase 4 — Exports and report center
 - ☐ CSV/XLSX (formula-injection safe, frozen panes, formats)/PDF; templates 1–5; async status; authorized downloads; report history
