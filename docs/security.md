@@ -1,6 +1,6 @@
 # Security
 
-Scope: Phases 1–2. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
+Scope: Phases 1–3. Items marked *planned* are tracked in the [implementation plan](implementation-plan.md).
 
 ## Authentication and sessions
 
@@ -23,10 +23,12 @@ Scope: Phases 1–2. Items marked *planned* are tracked in the [implementation p
 | Endpoint group | admin | analyst | viewer |
 |---|---|---|---|
 | `/analytics/*`, `/datasets/*` (incl. schema, quality) | ✓ | ✓ | ✓ |
+| `/explorer/*`, `POST /exports` (published rows only, bounded) | ✓ | ✓ | ✓ |
 | `GET /ingestion-jobs`, `/processing-runs/*/logs`, `/data-sources` | ✓ | ✓ | ✗ (403) |
 | `POST /ingestion-jobs`, `…/retry`, `…/cancel` | ✓ | ✗ (403) | ✗ (403) |
 
-Job actions are audited (`job.queued`, `job.retried`, `job.cancel_requested`). The web UI hides actions a role
+Job actions are audited (`job.queued`, `job.retried`, `job.cancel_requested`), and so is every extract
+(`export.csv`, with the filters, scope, matching and exported row counts). The web UI hides actions a role
 cannot take, but the API is the enforcement point.
 
 Checks run in backend dependencies, never only in the UI. In Phase 1 every role can read every published
@@ -43,6 +45,16 @@ dataset; per-dataset grants are planned for Phase 6.
   configuration and pass `validate_identifier`.
 - Queries can only reach published months. Hourly series are limited to 62 days, other ranges to
   `ANALYTICS_MAX_RANGE_DAYS`, and series to 5,000 points.
+- Explorer sort columns, extract columns and quality flags are closed lists (`Literal` types), checked against
+  the query builder's allowlists by a unit test. The row preview allows page sizes 25/50/100 and stops at the
+  first 10,000 rows; extracts stop at `MAX_EXPORT_ROWS` (default 100,000, at most 1,000,000) and are streamed.
+
+## Exports
+
+CSV extracts use standard quoting. Text cells that a spreadsheet would evaluate (starting with `=`, `+`, `-`,
+`@`, tab or carriage return) get a leading apostrophe; numbers, dates and booleans are written as values, so
+negative amounts stay numeric. The response states how many rows matched and how many were exported
+(`X-Total-Rows`, `X-Exported-Rows`, `X-Truncated`) so a truncated extract is never mistaken for a complete one.
 
 ## Least privilege
 
@@ -74,6 +86,12 @@ paths confined to the repository directory, and are size-capped and checksum-ver
 structure is validated, and only pyarrow/Spark readers touch them. Nothing in a file is executed or
 interpreted as an instruction. Raw objects are write-once: a different checksum for an existing key fails the
 run instead of overwriting the file.
+
+The taxi-zone shapefile archive is handled the same way: pinned checksum and size cap, then only the expected
+`.shp`, `.shx`, `.dbf` and `.prj` members are read (each capped at 25 MB; paths inside the archive are never
+used to write files). The projection must be the documented NY State Plane Long Island system and every zone
+must fall inside New York City's bounding box, or the build fails. The API serves the stored GeoJSON only after
+it parses as JSON, and the map draws it with ECharts, never as HTML.
 
 ## Secrets
 

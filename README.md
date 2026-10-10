@@ -2,12 +2,13 @@
 
 A Big Data analytics platform for NYC Taxi & Limousine Commission (TLC) trip records:
 **PySpark** validates and transforms monthly TLC Parquet files, curated data lands in an **S3 data lake**
-and **ClickHouse**, a **FastAPI** service serves bounded, parameterised analytics, and a **React** dashboard
+and **ClickHouse**, a **FastAPI** service serves bounded, parameterised analytics, and a **Next.js** web app
 renders it. Later phases add report exports and an AI analyst grounded in approved analytics tools
 (see [`docs/implementation-plan.md`](docs/implementation-plan.md)).
 
-> **Status: Phase 2 complete** — six months of Yellow Taxi data (24.1M trips) published through a queued,
-> cancellable batch pipeline, with pre-aggregates and a Next.js operations UI. Plan and checklist:
+> **Status: Phase 3 complete** — six months of Yellow Taxi data (24.1M trips) published through a queued,
+> cancellable batch pipeline, with pre-aggregates, a full dashboard set, a taxi-zone map and a data explorer
+> with audited CSV extracts. Plan and checklist:
 > [`docs/implementation-plan.md`](docs/implementation-plan.md). Specification: [`PROJECT_SPEC.md`](PROJECT_SPEC.md).
 
 ## What works today
@@ -16,10 +17,10 @@ renders it. Later phases add report exports and an AI analyst grounded in approv
 |---|---|
 | Ingestion | Source manifest (pinned SHA-256, HTTPS host allowlist), Parquet and CSV (NYC Open Data export) sources, size caps, structural validation that rejects truncated exports, immutable raw upload |
 | Spark | Per-file canonical schema mapping, quarantine (4 reasons), quality flags (7), derived fields, run metrics |
-| Storage | Raw / curated / quarantine Parquet in the lake (SeaweedFS, S3 API); ClickHouse fact table + 4 pre-aggregates, all swapped per month after exact verification |
-| Jobs | PostgreSQL queue + worker: queue from the UI/API, live stage progress, cancel (also mid-Spark), retry, run logs, stale-worker recovery |
-| API | Auth, datasets, schema registry and drift, quality reports, analytics (overview, time series, hour, weekday, top zones), jobs, data sources, health |
-| Web | Next.js: Overview with global, URL-synced filters and click-to-filter charts; Data sources; Processing jobs; Data quality (light theme) |
+| Storage | Raw / curated / quarantine Parquet in the lake (SeaweedFS, S3 API); ClickHouse fact table + 4 pre-aggregates, all swapped per month after exact verification; taxi-zone boundaries built from the TLC shapefile |
+| Jobs | PostgreSQL queue + worker: queue from the UI/API, live stage progress, cancel (between Spark actions), retry, run logs, stale-worker recovery |
+| API | Auth, datasets, schema registry and drift, quality reports, analytics (overview with period comparison, time series, hour, weekday, hour × weekday, payment types, vendors, pickup/drop-off zones, zone flows, distance and amount distributions, zone boundaries), explorer rows and CSV extracts, jobs, data sources, health |
+| Web | Next.js (light theme): Overview with comparison and zone map; Dashboards (demand, fares, zones and flows); Explore data; Data sources; Processing jobs; Data quality. Every filter lives in the URL and every chart filters on click |
 
 Measured on this machine (AMD Ryzen 5 5500, 12 threads, 14 GiB RAM):
 
@@ -30,6 +31,9 @@ Measured on this machine (AMD Ryzen 5 5500, 12 threads, 14 GiB RAM):
 | Aggregate backfill | 6 months in 5.8 s, each verified to the exact trip count and dollar total |
 | Six-month overview query | 178 ms on `taxi_trips` (24.1M rows read) vs 36 ms on `trips_hourly_agg` (2.2M rows) |
 | Daily series / top zones | 29 → 12 ms / 65 → 17 ms (fact table → aggregate) |
+| Phase 3 dashboard queries | 6–19 ms each from the aggregates (heatmap, payment types, vendors, zone totals, distributions); busiest pairs 238 ms on `taxi_trips` |
+| Distance filter (fact table) | 116 ms for six months once cached; up to 9.8 s on the first queries after a reboot (735 MiB read from disk) |
+| Zone map | 263 zones, 317 KB GeoJSON (80 KB gzipped), loaded once and cached |
 
 Single-machine, warm-cache medians of 5 runs; the reproducible benchmark is Phase 6.
 
@@ -92,10 +96,10 @@ record is not evidence of fraud.
 
 ```bash
 make lint               # ruff, ruff format --check, mypy --strict, tsc, eslint
-make test-unit          # 75 backend unit tests incl. local Spark transform tests
-make test-integration   # 26 tests against the running services (isolated tripscope_test DBs and bucket)
+make test-unit          # 100 backend unit tests incl. local Spark transform tests
+make test-integration   # 61 tests against the running services (isolated tripscope_test DBs and bucket)
 make test-frontend      # type check, lint, 12 Vitest tests
-E2E_ADMIN_EMAIL=… E2E_ADMIN_PASSWORD=… E2E_VIEWER_EMAIL=… E2E_VIEWER_PASSWORD=… make e2e   # Playwright, dev server
+E2E_ADMIN_EMAIL=… E2E_ADMIN_PASSWORD=… E2E_VIEWER_EMAIL=… E2E_VIEWER_PASSWORD=… make e2e   # 11 Playwright tests, dev server
 E2E_BASE_URL=http://127.0.0.1:8080 … make e2e                                                  # container build
 ```
 
@@ -122,6 +126,8 @@ docs/             Implementation plan, architecture, data dictionary, metric def
 | Jobs stay "Queued" | No worker is running: `make worker` (host) or `make app` (container) |
 | A job failed with "worker … stopped responding" | The worker died mid-run; retry the job |
 | `failed to bind host port … 8000` | Another API (e.g. `make api` with reload) is running; stop it before `make app` |
+| Map says "zone boundaries have not been built yet" | The next pipeline run builds them, or run `cd backend && uv run tripscope-pipeline build-zone-geometry` |
+| A filtered dashboard is slow right after a reboot | Filters on drop-off zone, distance or zone pairs read the 24M-row fact table; the first queries read it from disk, later ones are cached |
 
 ## Documentation
 

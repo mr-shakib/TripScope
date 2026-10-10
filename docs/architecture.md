@@ -31,12 +31,13 @@ This page describes the components and the data flow as built.
 | ClickHouse load | Stage from the lake, verify rows and exact decimal sums against Spark, atomically replace the month | `pipeline/clickhouse_load.py` |
 | Runner | Orchestrates stages, records timings, errors and the run's own log records, checks for cancellation between stages and before publishing, publishes the period, holds a per-source lock | `pipeline/runner.py` |
 | Job queue | Enqueue/retry/cancel/claim/stale detection in PostgreSQL; one active job per source enforced by a partial unique index | `jobs/service.py` |
-| Worker | Claims jobs, heartbeats, cancels in-flight Spark jobs on request, fails jobs of dead workers | `pipeline/worker.py` |
+| Worker | Claims jobs, heartbeats, cancels in-flight Spark jobs on every beat while a cancel is pending, fails jobs of dead workers | `pipeline/worker.py` |
+| Zone geometry | Reads the TLC taxi-zone shapefile, reprojects NY State Plane (US feet) to WGS84, simplifies and stores GeoJSON in the lake | `pipeline/zone_geometry.py` |
 | Pre-aggregates | Built from the verified staging rows and swapped with the fact table per month | `pipeline/aggregates.py` |
 | Metadata | Users, datasets, sources, jobs, runs, quality metrics, published periods, audit events | `metadata/`, `migrations/` |
-| Analytics | Shared filter model, metric registry, query builder that routes to the hourly aggregate when every filter is one of its dimensions, schema and quality reports | `analytics/` |
-| API | Auth, datasets, schema, quality, analytics, jobs, data sources, health/readiness | `api/` |
-| Web | Next.js App Router; Overview, Data sources, Processing jobs, Data quality | `frontend/src/` |
+| Analytics | Shared filter model, metric registry, query builder that routes each request to the cheapest table able to answer it, period comparison, distributions, explorer rows and CSV extracts, schema and quality reports | `analytics/` |
+| API | Auth, datasets, schema, quality, analytics, explorer and exports, jobs, data sources, health/readiness | `api/` |
+| Web | Next.js App Router; Overview, Dashboards, Explore data, Data sources, Processing jobs, Data quality. Filters and the active tab live in the URL | `frontend/src/` |
 
 ## Lake layout
 
@@ -46,6 +47,8 @@ tripscope-lake/
   curated/taxi_type=yellow/year=2025/month=01/run_id=<uuid>/part-*.parquet       (zstd, ~1M rows per file)
   quarantine/run_id=<uuid>/part-*.parquet                                        (rows + reasons)
   reference/taxi_zones/sha256=<hash>/taxi_zone_lookup.csv
+  reference/taxi_zone_shapes/sha256=<hash>/taxi_zones.zip                         (TLC shapefile, pinned checksum)
+  reference/taxi_zone_geometry/current.geojson                                   (built from it: 263 zones, WGS84)
 ```
 
 ## Idempotency and publication
@@ -61,19 +64,38 @@ tripscope-lake/
 
 ## Query routing
 
-`trips_hourly_agg` keeps pickup date, hour, weekday, pickup zone, payment type and vendor with trip counts and
-sums/counts of every valid value. When a request filters only on those dimensions (the common dashboard case)
-the API reads it: 2.2M rows instead of 24.1M for six months. Drop-off zone and distance filters fall back to
-`taxi_trips`. Averages are recomputed as sum ÷ count and "no valid rows" stays NULL, so both paths return
-the same numbers. Integration tests assert this across filter combinations, and they caught two real
-discrepancies during development (decimal-scale truncation and 0 vs. no data).
+Each table the API can read declares, in `analytics/query_builder.py`, the filters it can apply, the
+dimensions it can group by and the metrics it can compute. A request goes to the first table, cheapest first,
+that covers all three:
+
+| Table | Filters | Group by | Metrics |
+|---|---|---|---|
+| `trips_hourly_agg` (2.2M rows) | dates, pickup zone, payment type, vendor, hour, weekday | time, hour, weekday, pickup zone, payment type, vendor | all |
+| `trips_dropoff_daily_agg` | dates, drop-off zone, payment type, vendor | time, drop-off zone, payment type, vendor | all except average duration |
+| `taxi_trips` (24.1M rows) | everything | everything, including zone pairs | all |
+
+So the heatmap, payment types, vendors and pickup-zone totals read the hourly aggregate, drop-off totals read
+the drop-off aggregate, and a distance filter or a zone pair falls back to the fact table. Distributions read
+`fare_distance_buckets` unless a filter it lacks is active. Averages are recomputed as sum ÷ count and "no valid
+rows" stays NULL, so every path returns the same numbers. Integration tests assert this across filter
+combinations; they caught two real discrepancies during development (decimal-scale truncation and 0 vs. no data).
+
+## Zone map
+
+The TLC publishes zone boundaries as a shapefile in NY State Plane Long Island (EPSG:2263, US survey feet). The
+pipeline downloads it like any source (pinned checksum, size cap), reads only the expected members, reprojects
+with the file's own projection definition, merges multi-part zones, simplifies to about 10 m and checks every
+zone lies inside New York City. The result (317 KB, 80 KB gzipped) is stored in the lake; the API serves it
+from memory after the first request, and the map joins it to `zone-totals` by location ID. Zones 264/265
+("Unknown", "Outside of NYC") have no geometry and are listed separately.
 
 ## Jobs
 
 The API inserts a `queued` job; a worker claims it atomically (`FOR UPDATE SKIP LOCKED`), heartbeats every
-5 s and runs it. Cancel marks queued jobs cancelled immediately; for running jobs the worker sets the run's
-cancel event and cancels Spark jobs, and the runner checks between stages and right before the partition
-swap, so a cancelled run never publishes. Jobs whose worker stops heartbeating for 2 minutes are failed by
+5 s and runs it. Cancel marks queued jobs cancelled immediately. For running jobs the worker sets the run's
+cancel event and cancels Spark jobs on every heartbeat until the run stops; the transform checks before each
+Spark action and the runner between stages and right before the partition swap, so a cancelled run never
+publishes. Jobs whose worker stops heartbeating for 2 minutes are failed by
 any live worker and can be retried.
 
 ## Deployment
