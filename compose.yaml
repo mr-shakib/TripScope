@@ -122,7 +122,7 @@ services:
   api:
     profiles: ["app"]
     image: tripscope-api:dev  # built by db-migrate (same image)
-    environment:
+    environment: &api-env
       <<: *postgres-env
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
@@ -130,7 +130,7 @@ services:
       CLICKHOUSE_READER_USER: ${CLICKHOUSE_READER_USER:-tripscope_reader}
       ANALYTICS_QUERY_TIMEOUT_SECONDS: ${ANALYTICS_QUERY_TIMEOUT_SECONDS:-30}
       ANALYTICS_MAX_RANGE_DAYS: ${ANALYTICS_MAX_RANGE_DAYS:-1100}
-      # Readiness checks the lake bucket; this identity is the app's, reachable only inside the network.
+      # The app's lake identity: readiness, zone boundaries and report files. Reachable only in the network.
       S3_ENDPOINT_URL: http://seaweedfs:8333
       S3_BUCKET: ${S3_BUCKET:-tripscope-lake}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -182,6 +182,21 @@ services:
       - pipeline-work:/data/work
       - ./manifests:/app/manifests:ro
     stop_grace_period: 2m
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+      seaweedfs: { condition: service_healthy }
+
+  # Generates report files queued through the API (ADR-19): the API image and the API's credentials
+  # (read-only ClickHouse user, the app's lake identity), no JVM and no writer secrets.
+  report-worker:
+    profiles: ["app"]
+    image: tripscope-api:dev
+    command: ["tripscope-report-worker"]
+    environment: *api-env
+    volumes:
+      - ./manifests:/app/manifests:ro
+    stop_grace_period: 1m
     depends_on:
       db-migrate: { condition: service_completed_successfully }
       clickhouse: { condition: service_healthy }
