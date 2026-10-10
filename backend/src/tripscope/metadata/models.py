@@ -48,6 +48,17 @@ class JobStatus(enum.StrEnum):
     CANCELLED = "cancelled"
 
 
+class ReportFormat(enum.StrEnum):
+    PDF = "pdf"
+    XLSX = "xlsx"
+    CSV = "csv"
+
+
+class ReportVisibility(enum.StrEnum):
+    PRIVATE = "private"  # the creator and administrators
+    SHARED = "shared"  # every signed-in user, viewers included
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -233,4 +244,76 @@ class AuditEvent(Base):
     __table_args__ = (
         Index("ix_audit_events_occurred_at", "occurred_at"),
         Index("ix_audit_events_action", "action"),
+    )
+
+
+class Report(Base):
+    """A saved report definition (FR-09): template, title, filters and sections. Files come from runs."""
+
+    __tablename__ = "reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    template: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(200))
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id"))
+    filters: Mapped[dict[str, Any]] = mapped_column(JSONB)  # AnalyticsFilters, as applied()
+    sections: Mapped[list[Any]] = mapped_column(JSONB)  # enabled section ids, in template order
+    visibility: Mapped[ReportVisibility] = mapped_column(
+        Enum(ReportVisibility, name="report_visibility", values_callable=lambda e: [m.value for m in e])
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    creator: Mapped[User] = relationship()
+    runs: Mapped[list[ReportRun]] = relationship(
+        back_populates="report", order_by="ReportRun.created_at.desc()", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (Index("ix_reports_updated_at", "updated_at"),)
+
+
+class ReportRun(Base):
+    """One generation of a report file. The definition is snapshotted, so later edits never change it."""
+
+    __tablename__ = "report_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    report_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
+    format: Mapped[ReportFormat] = mapped_column(
+        Enum(ReportFormat, name="report_format", values_callable=lambda e: [m.value for m in e])
+    )
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, name="job_status", values_callable=lambda e: [m.value for m in e], create_type=False)
+    )
+    definition: Mapped[dict[str, Any]] = mapped_column(JSONB)  # template, title, filters, sections at request
+    requested_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    dataset_version: Mapped[list[Any] | None] = mapped_column(JSONB)  # [{period, run_id, row_count}]
+    object_key: Mapped[str | None] = mapped_column(Text)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    page_count: Mapped[int | None] = mapped_column(Integer)
+
+    report: Mapped[Report] = relationship(back_populates="runs")
+    requester: Mapped[User] = relationship()
+
+    __table_args__ = (
+        Index("ix_report_runs_status_created", "status", "created_at"),
+        # One queued or running file per report and format: repeated clicks cannot pile up work.
+        Index(
+            "uq_report_runs_active_format",
+            "report_id",
+            "format",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
     )

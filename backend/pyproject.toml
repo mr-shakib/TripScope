@@ -16,8 +16,10 @@ dependencies = [
     "pydantic-settings>=2.15,<3",
     "pyjwt>=2.15,<3",
     "pyyaml>=6.0,<7",
+    "reportlab>=5.0,<6",
     "sqlalchemy>=2.1,<2.2",
     "uvicorn[standard]>=0.54,<0.60",
+    "xlsxwriter>=3.2,<4",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +38,8 @@ dev = [
     "types-pyyaml>=6.0",
     "boto3-stubs[s3]>=1.43",
     "python-dotenv>=1.2.4",
+    "pypdf>=6.19,<7",
+    "openpyxl>=3.1,<4",
 ]
 
 [build-system]
@@ -64,6 +68,9 @@ ignore = ["PLR0913", "PLR0917", "PLR2004", "S101", "PLR0911", "PLC0415", "N812"]
 "src/tripscope/pipeline/clickhouse_load.py" = ["S608"]
 "src/tripscope/analytics/query_builder.py" = ["S608"]
 "src/tripscope/pipeline/aggregates.py" = ["S608"]
+# Report text uses typographic punctuation on purpose (en dashes in ranges, a true minus sign, ×).
+"src/tripscope/reports/**" = ["RUF001", "RUF002"]
+"tests/unit/test_reports.py" = ["RUF001"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -73,7 +80,7 @@ packages = ["tripscope"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyspark.*", "clickhouse_connect.*", "pyarrow.*", "shapefile.*", "shapely.*", "pyproj.*"]
+module = ["pyspark.*", "clickhouse_connect.*", "pyarrow.*", "shapefile.*", "shapely.*", "pyproj.*", "reportlab.*", "xlsxwriter.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
